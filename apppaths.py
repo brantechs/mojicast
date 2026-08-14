@@ -58,6 +58,14 @@ if getattr(sys, "frozen", False):
         _unblock_downloaded_files(BASE)   # clr 読み込み前に MOTW を剥がす
     # DL先も参照先も DATA_BASE/models に集約（HF系を import する前に確定させる）
     os.environ.setdefault("HF_HOME", os.path.join(DATA_BASE, "models"))
+    # symlink を使わせない（初回DLのクラッシュ対策・HF系 import より前に設定する）。
+    # huggingface_hub 1.22.0 の are_symlinks_supported() は実テストの前に
+    # 「対応あり」の判定キャッシュを書くためスレッド非安全で、snapshot_download の
+    # 並列DL中に別スレッドがその値を読んで os.symlink を実行してしまう。Windows の
+    # 開発者モードOFF環境では OSError WinError 1314 になり、初回モデルDLごと落ちる
+    # （日本語 Windows 11・開発者モードOFFで再現）。この変数は判定より先に短絡して
+    # move/copy 動作に固定するので競合ごと回避できる（モデル配置用途では重複コスト無し）。
+    os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
 else:
     BASE = os.path.dirname(os.path.abspath(__file__))
     DATA_BASE = BASE

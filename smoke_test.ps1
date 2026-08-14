@@ -88,19 +88,29 @@ if ($server) {
     Note "多言語経路を検証中（未DLならここで 約240MB+470MB のDLが入ります）..."
     try { Invoke-RestMethod "http://127.0.0.1:8765/api/engine" -Method Post -Body '{"action":"stop"}' -ContentType "application/json" -TimeoutSec 10 | Out-Null } catch {}
     Start-Sleep -Seconds 3
-    Invoke-RestMethod "http://127.0.0.1:8765/api/config" -Method Post -Body '{"asr_model":"sensevoice","asr_lang":"zh","translate_lang":"en"}' -ContentType "application/json" | Out-Null
-    Invoke-RestMethod "http://127.0.0.1:8765/api/engine" -Method Post -Body '{"action":"start"}' -ContentType "application/json" | Out-Null
-    $state = ""; $detail = ""
-    foreach ($i in 1..$limit) {
-        Start-Sleep -Seconds 2
-        if (-not (Get-Process Mojicast -EA SilentlyContinue)) { $fail += "多言語検証中にプロセスが終了した"; break }
-        try { $s = Invoke-RestMethod "http://127.0.0.1:8765/api/status" -TimeoutSec 5 } catch { continue }
-        $state = $s.state; $detail = $s.detail
-        if ($state -in @("running","error")) { break }
+    # ここでプロセスが既に死んでいると terminating error でスクリプトごと落ち、
+    # 末尾のサマリー（$fail 一覧）が出ないため、開始要求だけは try/catch で受ける。
+    $mlStarted = $true
+    try {
+        Invoke-RestMethod "http://127.0.0.1:8765/api/config" -Method Post -Body '{"asr_model":"sensevoice","asr_lang":"zh","translate_lang":"en"}' -ContentType "application/json" | Out-Null
+        Invoke-RestMethod "http://127.0.0.1:8765/api/engine" -Method Post -Body '{"action":"start"}' -ContentType "application/json" | Out-Null
+    } catch {
+        $mlStarted = $false
+        $fail += "多言語検証の開始に失敗（サーバ無応答＝プロセス終了の可能性）"
     }
-    if ($state -eq "running") { Note "  [OK] 多言語（SenseVoice＋中→英翻訳）running 到達" }
-    else { $fail += "多言語経路で running に到達しない (state=$state detail=$detail)" }
-    if ($detail -match "失敗") { $fail += "多言語経路の自己診断警告: $detail" }
+    if ($mlStarted) {
+        $state = ""; $detail = ""
+        foreach ($i in 1..$limit) {
+            Start-Sleep -Seconds 2
+            if (-not (Get-Process Mojicast -EA SilentlyContinue)) { $fail += "多言語検証中にプロセスが終了した"; break }
+            try { $s = Invoke-RestMethod "http://127.0.0.1:8765/api/status" -TimeoutSec 5 } catch { continue }
+            $state = $s.state; $detail = $s.detail
+            if ($state -in @("running","error")) { break }
+        }
+        if ($state -eq "running") { Note "  [OK] 多言語（SenseVoice＋中→英翻訳）running 到達" }
+        else { $fail += "多言語経路で running に到達しない (state=$state detail=$detail)" }
+        if ($detail -match "失敗") { $fail += "多言語経路の自己診断警告: $detail" }
+    }
     # 設定を既定へ戻す（dataは後段で削除されるが、検証順の独立性のため明示的に）
     try { Invoke-RestMethod "http://127.0.0.1:8765/api/config" -Method Post -Body '{"asr_model":"k2-ja","asr_lang":"auto","translate_lang":"en"}' -ContentType "application/json" -TimeoutSec 5 | Out-Null } catch {}
 

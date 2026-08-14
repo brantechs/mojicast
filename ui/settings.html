@@ -174,7 +174,34 @@
             <option value="ko" data-i18n="st.tl_ko">韓国語（試験的）</option>
           </select></div>
           <div class="route" id="translationRoute"></div>
+          <div class="field"><label for="translateLang2" data-i18n="st.f_translang2">2つ目の翻訳言語（同時に併記）</label><select id="translateLang2">
+            <option value="" data-i18n="st.tl_none">追加しない</option>
+            <option value="en" data-i18n="st.tl_en">英語</option>
+            <optgroup label="中国語圏" data-i18n-label="st.tl_group_zh">
+              <option value="zh" data-i18n="st.tl_zh">中国語（簡体字・中国大陸）</option>
+              <option value="zh_tw" data-i18n="st.tl_zhtw">中国語（繁体字・台湾）</option>
+              <option value="zh_hk" data-i18n="st.tl_zhhk">中国語（繁体字・香港）</option>
+            </optgroup>
+            <option value="id" data-i18n="st.tl_id">インドネシア語</option>
+            <option value="ja" data-i18n="st.tl_ja">日本語</option>
+            <option value="ko" data-i18n="st.tl_ko">韓国語（試験的）</option>
+          </select></div>
+          <div class="route" id="translationRoute2"></div>
+          <div class="field"><label for="translateLang3" data-i18n="st.f_translang3">3つ目の翻訳言語（同時に併記）</label><select id="translateLang3">
+            <option value="" data-i18n="st.tl_none">追加しない</option>
+            <option value="en" data-i18n="st.tl_en">英語</option>
+            <optgroup label="中国語圏" data-i18n-label="st.tl_group_zh">
+              <option value="zh" data-i18n="st.tl_zh">中国語（簡体字・中国大陸）</option>
+              <option value="zh_tw" data-i18n="st.tl_zhtw">中国語（繁体字・台湾）</option>
+              <option value="zh_hk" data-i18n="st.tl_zhhk">中国語（繁体字・香港）</option>
+            </optgroup>
+            <option value="id" data-i18n="st.tl_id">インドネシア語</option>
+            <option value="ja" data-i18n="st.tl_ja">日本語</option>
+            <option value="ko" data-i18n="st.tl_ko">韓国語（試験的）</option>
+          </select></div>
+          <div class="route" id="translationRoute3"></div>
           <div class="note" data-i18n="st.note_trans">翻訳モデルは、認識言語と翻訳先に合わせて自動で選ばれます。台湾・香港向けは地域ごとの漢字と語彙に整えます。</div>
+          <div class="note" data-i18n="st.note_trans_multi">翻訳先は最大3言語まで選べ、確定字幕の下に設定順で積んで表示します。言語を増やすほど翻訳モデルのロードと処理量が増えるため、低スペック機では1言語だけがおすすめです。</div>
         </article>
       </div>
     </section>
@@ -328,23 +355,32 @@
   // 言語が切り替わったら動的テキスト（ページ説明）を再適用
   window.addEventListener("mojicast-lang-changed", () => { $("pageDesc").textContent = T("st.desc_" + curSection, descsJa[curSection]); syncTranslationRoute(); });
   function syncAsrLanguage() { $("asrLangRow").style.display = $("asrModel").value === "sensevoice" ? "" : "none"; }
+  const TRANS_NAMES = {ja:"日本語",zh:"中国語",en:"英語",ko:"韓国語",id:"インドネシア語",
+    zh_tw:"中国語（台湾繁体字）",zh_hk:"中国語（香港繁体字）"};
+  // 翻訳先1つぶんの経路説明（engine._plan_for_target と同じ判定）
+  function transRouteText(src, tgt) {
+    const names = TRANS_NAMES, regional = ["zh_tw", "zh_hk"].includes(tgt);
+    if (src === tgt) return "認識言語と翻訳先が同じため、翻訳はスキップされます";
+    if (src === "zh" && regional) return `使用処理: OpenCC（中国語 → ${names[tgt]}）`;
+    let model = src === "ja" && tgt === "en" ? "FuguMT" : "M2M-100";
+    if (regional) model += " ＋ OpenCC";
+    return `使用モデル: ${model}（${names[src] || src} → ${names[tgt] || tgt}）`;
+  }
+  // 翻訳先（最大3言語）ごとに、使われるモデルと経路のヒントを出す
   function syncTranslationRoute() {
     const sv = cfg.asr_model === "sensevoice";
     let src = sv && cfg.asr_lang && !["auto","ja"].includes(cfg.asr_lang) ? cfg.asr_lang : "ja";
     if (src === "yue") src = "zh";
-    const tgt = cfg.translate_lang || "en";
-    const names = {ja:"日本語",zh:"中国語",en:"英語",ko:"韓国語",id:"インドネシア語",
-      zh_tw:"中国語（台湾繁体字）",zh_hk:"中国語（香港繁体字）"};
-    const regional = ["zh_tw", "zh_hk"].includes(tgt);
-    if (src === tgt) {
-      $("translationRoute").textContent = "認識言語と翻訳先が同じため、翻訳はスキップされます";
-    } else if (src === "zh" && regional) {
-      $("translationRoute").textContent = `使用処理: OpenCC（中国語 → ${names[tgt]}）`;
-    } else {
-      let model = src === "ja" && tgt === "en" ? "FuguMT" : "M2M-100";
-      if (regional) model += " ＋ OpenCC";
-      $("translationRoute").textContent = `使用モデル: ${model}（${names[src] || src} → ${names[tgt] || tgt}）`;
-    }
+    const tgts = [cfg.translate_lang || "en", cfg.translate_lang2 || "", cfg.translate_lang3 || ""];
+    tgts.forEach((tgt, i) => {
+      const el = $("translationRoute" + (i ? i + 1 : ""));
+      el.style.display = (i && !tgt) ? "none" : "";   // 「追加しない」の欄はヒントごと隠す
+      if (i && !tgt) return;
+      // 先に選んだ翻訳先と同じなら、エンジン側で1経路にまとめられる
+      el.textContent = tgts.slice(0, i).includes(tgt)
+        ? "先に選んだ翻訳先と同じため、1つにまとめられます"
+        : transRouteText(src, tgt);
+    });
   }
   async function loadApps() {
     if (cfg.collab_supported === false) return;   // 未対応OSではヒントを上書きしない
@@ -376,6 +412,7 @@
     bindRange("interval","intervalOut","interval","秒",.4); bindRange("hotwordsScore","hotwordsOut","hotwords_score","",2);
     $("useHotwords").checked = cfg.use_hotwords !== false; $("numArabic").checked = cfg.num_arabic !== false; $("highPrecision").checked = cfg.precision === "fp32";
     $("translate").checked = !!cfg.translate; $("translateLang").value = cfg.translate_lang || "en";
+    $("translateLang2").value = cfg.translate_lang2 || ""; $("translateLang3").value = cfg.translate_lang3 || "";
     $("collab").checked = !!cfg.collab; $("selfName").value = cfg.self_name || ""; $("guestName").value = cfg.guest_name || "";
     if (cfg.collab_supported === false) {   // コラボ未対応OS（mac）: セクションごと無効化
       $("collab").checked = false;
@@ -424,6 +461,8 @@
   $("highPrecision").addEventListener("change", e => save({precision:e.target.checked ? "fp32" : "int8-fp32"}));
   $("translate").addEventListener("change", e => save({translate:e.target.checked},false));
   $("translateLang").addEventListener("change", e => { cfg.translate_lang=e.target.value; syncTranslationRoute(); save({translate_lang:e.target.value}); });
+  $("translateLang2").addEventListener("change", e => { cfg.translate_lang2=e.target.value; syncTranslationRoute(); save({translate_lang2:e.target.value}); });
+  $("translateLang3").addEventListener("change", e => { cfg.translate_lang3=e.target.value; syncTranslationRoute(); save({translate_lang3:e.target.value}); });
   $("collab").addEventListener("change", e => save({collab:e.target.checked}));
   $("vcEnabled").addEventListener("change", e => save({vc_enabled:e.target.checked}));
   $("vcWake").addEventListener("input", e => { clearTimeout(vcTimer); vcTimer = setTimeout(() => save({vc_wake:e.target.value.split(/[、,，]/).map(s => s.trim()).filter(Boolean)}), 400); });

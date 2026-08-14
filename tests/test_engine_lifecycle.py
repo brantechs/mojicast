@@ -336,9 +336,36 @@ class CaptionEngineLifecycleTests(unittest.TestCase):
         self.assertEqual(translated, [(1, "en", "en:こんにちは"),
                                       (1, "zh", "zh:こんにちは")])
 
+    def test_translation_worker_emits_three_target_languages(self):
+        translated = []
+        done = threading.Event()
+        self.engine = CaptionEngine(
+            on_translation=lambda fid, lang, text:
+                (translated.append((fid, lang, text)),
+                 done.set() if lang == "ko" else None)
+        )
+        self.engine._translators = [
+            ("fugumt", "en", lambda t: "en:" + t),
+            ("opencc", "zh_tw", lambda t: "zh_tw:" + t),
+            ("m2m", "ko", lambda t: "ko:" + t),
+        ]
+        self.engine._translate_on = True
+        self.engine._tq = queue.Queue(maxsize=8)
+        self.engine._tworker = threading.Thread(
+            target=self.engine._translate_loop, daemon=True
+        )
+        self.engine._tworker.start()
+        self.engine._tq.put_nowait((1, "こんにちは"))
+        self.assertTrue(done.wait(1))
+        self.engine._stop_translate_worker()
+        # 第1→第2→第3翻訳先の順（＝設定順）に通知される
+        self.assertEqual(translated, [(1, "en", "en:こんにちは"),
+                                      (1, "zh_tw", "zh_tw:こんにちは"),
+                                      (1, "ko", "ko:こんにちは")])
+
 
 class TranslatePlansTest(unittest.TestCase):
-    """_translate_plans: 第1・第2翻訳先から翻訳経路を決める判定"""
+    """_translate_plans: 第1〜第3翻訳先から翻訳経路を決める判定"""
 
     def setUp(self):
         self.engine = CaptionEngine()
@@ -363,10 +390,31 @@ class TranslatePlansTest(unittest.TestCase):
             self.plans(translate_lang="en", translate_lang2="en"),
             (("fugumt", "ja", "en"),))
 
+    def test_third_target_appends_plan(self):
+        self.assertEqual(
+            self.plans(translate_lang="en", translate_lang2="zh_tw",
+                       translate_lang3="ko"),
+            (("fugumt", "ja", "en"), ("m2m", "ja", "zh_tw"),
+             ("m2m", "ja", "ko")))
+
+    def test_third_target_collapses_when_duplicated(self):
+        # 3つ目が1つ目・2つ目と重複しても経路は増えない
+        self.assertEqual(
+            self.plans(translate_lang="en", translate_lang2="ko",
+                       translate_lang3="en"),
+            (("fugumt", "ja", "en"), ("m2m", "ja", "ko")))
+
     def test_empty_second_target_keeps_single(self):
         self.assertEqual(
             self.plans(translate_lang="zh", translate_lang2=""),
             (("m2m", "ja", "zh"),))
+
+    def test_empty_second_target_does_not_drop_third(self):
+        # 2つ目だけ「追加しない」でも、3つ目は設定順で生きる
+        self.assertEqual(
+            self.plans(translate_lang="en", translate_lang2="",
+                       translate_lang3="zh"),
+            (("fugumt", "ja", "en"), ("m2m", "ja", "zh")))
 
     def test_same_as_source_skipped_per_target(self):
         # 中国語認識中: 第1(zh)は原文と同じでスキップ、第2(en)だけ生きる

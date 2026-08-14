@@ -10,8 +10,9 @@ transcribe_stream.py の疑似ストリーミング処理を、開始/停止で�
     on_level(rms)          マイク入力レベル 0.0-1.0（約100ms間隔）
     on_state(state, detail) loading / ready / running / stopped / error
     on_translation(fid, lang, text) 確定行の翻訳（別スレッドで遅れて届く。
-                            fid で行に対応。lang は翻訳先コード。第2翻訳先を
-                            設定していると同じ fid に対して2言語ぶん届く）
+                            fid で行に対応。lang は翻訳先コード。翻訳先を
+                            追加していると、同じ fid に対して翻訳先の数だけ
+                            届く＝最大3言語ぶん）
 """
 import os
 import time
@@ -248,14 +249,16 @@ class CaptionEngine:
     def _translate_plans(self, cfg):
         """cfg から翻訳経路を決める → (plan, ...) のタプル / 翻訳不要なら空タプル
 
-        第1翻訳先(translate_lang)と第2翻訳先(translate_lang2・空=無効)を順に
-        解決する。重複（同じ翻訳先を2つ選んだ等）は1つにまとめる。
+        第1翻訳先(translate_lang)から第3翻訳先(translate_lang3)までを設定順に
+        解決する。第2・第3は空=無効。重複（同じ翻訳先を2つ選んだ等）は
+        1つにまとめる。
         """
         if not cfg.get("translate", False):
             return ()
         plans = []
         for tgt in (cfg.get("translate_lang", "en"),
-                    cfg.get("translate_lang2", "")):
+                    cfg.get("translate_lang2", ""),
+                    cfg.get("translate_lang3", "")):
             if not tgt:
                 continue
             plan = self._plan_for_target(cfg, tgt)
@@ -571,7 +574,7 @@ class CaptionEngine:
 
     def _translate_loop(self):
         """確定行を順に翻訳する（認識ループとは別スレッド）。
-        翻訳先が2言語のときは同じ確定行を各翻訳先へ順に翻訳して通知する。"""
+        翻訳先が複数のときは同じ確定行を各翻訳先へ順に翻訳して通知する。"""
         q = self._tq
         while True:
             item = q.get()

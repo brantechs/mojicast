@@ -723,12 +723,13 @@
   const TR_NAMES = { en: "英訳", zh: "中国語訳", zh_tw: "台湾繁体字訳",
     zh_hk: "香港繁体字訳", id: "インドネシア語訳", ja: "日本語訳", ko: "韓国語訳" };
   function syncModelCard() {
-    const lang = cfg.translate_lang || "en";
-    let label = T("trg." + lang, TR_NAMES[lang] || "英訳");
-    const lang2 = cfg.translate_lang2 || "";
-    if (lang2 && lang2 !== lang)
-      label += "＋" + T("trg." + lang2, TR_NAMES[lang2] || lang2);
-    $("transFeatureLabel").textContent = label;
+    // 翻訳先は最大3言語。重複と空を除いて設定順に「＋」で連結する
+    const langs = [];
+    for (const l of [cfg.translate_lang || "en", cfg.translate_lang2 || "",
+                     cfg.translate_lang3 || ""])
+      if (l && !langs.includes(l)) langs.push(l);
+    $("transFeatureLabel").textContent =
+      langs.map(l => T("trg." + l, TR_NAMES[l] || l)).join("＋");
   }
 
   // コックピットに残す配信中の機能トグル
@@ -936,7 +937,7 @@
   // 反映に再起動（停止→開始）が必要な設定キー。別窓（モデル/コラボ等）での
   // 変更もSSE経由でここを通るので、変化を見つけたら警告バーを出す
   const RESTART_KEYS = ["asr_model", "asr_lang", "translate_lang",
-    "translate_lang2", "precision",
+    "translate_lang2", "translate_lang3", "precision",
     "device", "silence_ms", "interval", "max_utt", "hotwords_score",
     "use_hotwords", "word_profile", "collab", "collab_source",
     "collab_process", "collab_device", "self_name", "guest_name",
@@ -1241,7 +1242,7 @@
     if (!text || id == null) return;
     const d = monitor.querySelector('[data-fid="' + id + '"]');
     if (!d) return;
-    // 翻訳先が2言語のときは言語ごとに1行ずつ積む（overlayと同じ振り分け）
+    // 翻訳先が複数（最大3言語）のときは言語ごとに1行ずつ積む（overlayと同じ振り分け）
     lang = lang || "";
     let el = [...d.querySelectorAll(".en")].find((e) => (e.dataset.lang || "") === lang);
     if (!el) { el = document.createElement("div"); el.className = "en"; el.dataset.lang = lang; d.appendChild(el); }

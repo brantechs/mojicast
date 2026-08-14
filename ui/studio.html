@@ -332,11 +332,13 @@
       $("layoutCurrent").textContent = box ? box.name : T("su.default","標準");
       $("wordsCurrent").textContent = T("su.registered","登録 {n}語").replace("{n}", (wd.entries || []).length);
       $("captionSummary").textContent = `${$("designCurrent").textContent} ／ ${$("layoutCurrent").textContent} ／ ${$("wordsCurrent").textContent}`;
-      let trLabel = T("su.tr_" + (cfg.translate_lang || "en"), trNames[cfg.translate_lang] || "英語");
-      const trLang2 = cfg.translate_lang2 || "";
-      if (trLang2 && trLang2 !== (cfg.translate_lang || "en"))
-        trLabel += "＋" + T("su.tr_" + trLang2, trNames[trLang2] || trLang2);
-      $("translationCurrent").textContent = trLabel;
+      // 翻訳先は最大3言語。重複と空を除いて設定順に「＋」で連結する
+      const trLangs = [];
+      for (const l of [cfg.translate_lang || "en", cfg.translate_lang2 || "",
+                       cfg.translate_lang3 || ""])
+        if (l && !trLangs.includes(l)) trLangs.push(l);
+      $("translationCurrent").textContent =
+        trLangs.map(l => T("su.tr_" + l, trNames[l] || l)).join("＋");
       for (const [id,key] of [["effectsSwitch","word_fx"],["translationSwitch","translate"]]) $(id).setAttribute("aria-pressed",String(!!cfg[key]));
       if (!profiles.length) await loadProfiles(); else $("profileScope").value = profiles.includes(cfg.word_profile) ? cfg.word_profile : "";
     } catch (e) {}

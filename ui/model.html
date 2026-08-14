@@ -139,7 +139,7 @@
       <div class="row">
         <label>2つ目の翻訳言語（同時に併記）</label>
         <select id="transLang2">
-          <option value="">なし（1言語のみ）</option>
+          <option value="">追加しない</option>
           <option value="en">英語</option>
           <optgroup label="中国語圏">
             <option value="zh">中国語（簡体字・中国大陸）</option>
@@ -151,8 +151,25 @@
           <option value="ko">韓国語（試験的）</option>
         </select>
         <div class="route" id="routeHint2" style="display:none"></div>
-        <div class="hint">確定字幕の下に2言語ぶんの訳文を積んで表示します。
-          翻訳の処理量が増えるため、低スペック機では1言語のみがおすすめです。</div>
+      </div>
+      <div class="row">
+        <label>3つ目の翻訳言語（同時に併記）</label>
+        <select id="transLang3">
+          <option value="">追加しない</option>
+          <option value="en">英語</option>
+          <optgroup label="中国語圏">
+            <option value="zh">中国語（簡体字・中国大陸）</option>
+            <option value="zh_tw">中国語（繁体字・台湾）</option>
+            <option value="zh_hk">中国語（繁体字・香港）</option>
+          </optgroup>
+          <option value="id">インドネシア語</option>
+          <option value="ja">日本語（海外配信の認識と組み合わせて）</option>
+          <option value="ko">韓国語（試験的）</option>
+        </select>
+        <div class="route" id="routeHint3" style="display:none"></div>
+        <div class="hint">確定字幕の下に最大3言語ぶんの訳文を設定順で積んで表示します。
+          言語を増やすほど翻訳モデルのロードと処理量が増えるため、
+          低スペック機では1言語のみがおすすめです。</div>
       </div>
     </div>
   </main>
@@ -208,6 +225,7 @@
     $("asrLang").value = cfg.asr_lang || "auto";
     $("transLang").value = cfg.translate_lang || "en";
     $("transLang2").value = cfg.translate_lang2 || "";
+    $("transLang3").value = cfg.translate_lang3 || "";
     $("modelDesc").textContent = DESCS[$("asrModel").value];
     $("asrLangRow").style.display = sv ? "" : "none";
     // 実際に使われる翻訳モデルと方向
@@ -215,15 +233,18 @@
     if (sv && cfg.asr_lang && !["auto", "ja"].includes(cfg.asr_lang))
       src = cfg.asr_lang;
     if (src === "yue") src = "zh";   // 広東語は中文字扱いで翻訳（engineと同じ判定）
-    $("routeHint").textContent = routeText(src, cfg.translate_lang || "en");
-    const tgt2 = cfg.translate_lang2 || "";
-    $("routeHint2").style.display = tgt2 ? "" : "none";
-    if (tgt2) {
-      $("routeHint2").textContent =
-        tgt2 === (cfg.translate_lang || "en")
-          ? "1つ目と同じ翻訳先のため、1言語だけ表示されます"
-          : routeText(src, tgt2);
-    }
+    // 翻訳先（最大3言語）ごとに経路ヒントを出す。「追加しない」の欄は隠す
+    const tgts = [cfg.translate_lang || "en", cfg.translate_lang2 || "",
+      cfg.translate_lang3 || ""];
+    tgts.forEach((tgt, i) => {
+      const el = $("routeHint" + (i ? i + 1 : ""));
+      el.style.display = (i && !tgt) ? "none" : "";
+      if (i && !tgt) return;
+      // 先に選んだ翻訳先と同じなら、エンジン側で1経路にまとめられる
+      el.textContent = tgts.slice(0, i).includes(tgt)
+        ? "先に選んだ翻訳先と同じため、1つにまとめられます"
+        : routeText(src, tgt);
+    });
   }
 
   $("asrModel").addEventListener("change", () => {
@@ -238,6 +259,9 @@
   $("transLang2").addEventListener("change", () => {
     save({ translate_lang2: $("transLang2").value }); sync();
   });
+  $("transLang3").addEventListener("change", () => {
+    save({ translate_lang3: $("transLang3").value }); sync();
+  });
 
   // 認識が動作中なら「停止→開始で反映」の警告を出す（保存のたびに再確認）
   async function checkRunning() {
@@ -246,7 +270,7 @@
       $("runWarn").style.display = st.state === "running" ? "" : "none";
     } catch (e) {}
   }
-  for (const id of ["asrModel", "asrLang", "transLang", "transLang2"])
+  for (const id of ["asrModel", "asrLang", "transLang", "transLang2", "transLang3"])
     $(id).addEventListener("change", checkRunning);
 
   (async () => {

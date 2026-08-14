@@ -44,7 +44,8 @@ DEFAULT_CONFIG = {
     "setup_suggested": False,  # 初回の「おすすめ設定」提案を表示済みか
     "use_hotwords": True, "hotwords_score": 2.0, "translate": False,
     "translate_lang": "en",  # 翻訳先（en/zh/zh_tw/zh_hk/id/ja/ko）
-    "translate_lang2": "",   # 第2翻訳先（同上のコード。"" = 1言語のみ）
+    "translate_lang2": "",   # 第2翻訳先（同上のコード。"" = 追加しない）
+    "translate_lang3": "",   # 第3翻訳先（同上のコード。"" = 追加しない）
     "save_log": True, "mask_char": "○", "num_arabic": True,
     "word_fx": True,        # 単語エフェクトの表示（OFFでも認識誘導・置換は有効）
     "preset": "standard", "box": "none", "port": 8765,
@@ -950,9 +951,9 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"ok": False,
                                 "error": "ポートは 1024〜65535 の数値で指定してください"}, 400)
                     return
-            if ("translate_lang2" in body
-                    and body.get("translate_lang2") not in ("",) + _VC_TRANS_LANGS):
-                body["translate_lang2"] = ""   # 未知値は「1言語のみ」へ（既定）
+            for k in ("translate_lang2", "translate_lang3"):
+                if k in body and body.get(k) not in ("",) + _VC_TRANS_LANGS:
+                    body[k] = ""   # 未知値は「追加しない」へ（既定）
             if "theme" in body and body.get("theme") not in ("dark", "light"):
                 body["theme"] = "light"   # 未知値はライトへ（既定）
             if "ui_lang" in body and body.get("ui_lang") not in ("ja", "zh", "en"):

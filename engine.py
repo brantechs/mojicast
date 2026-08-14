@@ -32,6 +32,11 @@ WINDOW_SIZE = 512
 PARTIAL_WINDOW_SEC = 6.0   # 途中経過(薄文字)がデコードする末尾の秒数
 VAD_MODEL_PATH = os.path.join(BASE, "silero_vad.onnx")
 
+# 日次ログ（logs/daily/01.txt〜31.txt）の置き場。月をまたぐと同じ日番号の
+# ファイルを上書きするので、常に「直近1か月ぶん」だけが残る。
+# app_server.py の書き出し（/api/logs/export）もこの名前を参照する。
+DAILY_LOG_DIR_NAME = "daily"
+
 # 過負荷やデバイス異常時にもメモリを無制限に使わないための待ち行列上限。
 # 音声は約30秒、翻訳は128発話ぶんを保持する。通常配信では到達しない余裕を
 # 持たせ、到達時だけ古い待ちデータを整理して「ライブ」へ追いつかせる。
@@ -124,6 +129,9 @@ class CaptionEngine:
         self._tworker = None        # 翻訳ワーカースレッド
         self._fid = 0               # 確定行の通し番号（英訳の対応付け用）
         self._logf = None           # 文字起こしログのファイルハンドル（無効時 None）
+        self._dailyf = None         # 日次ログ logs/daily/日番号.txt のハンドル
+        self._daily_key = None      # 日次ログを開いた (年, 月, 日)。変わったら開き直す
+        self._save_log = False      # 文字起こしログを残す設定か
         self._mask = None           # 禁止ワードの伏せ字化関数（無効時 None）
         self._gloss = None          # 英訳辞書 [(表記, 英訳)]（無効時 None）
         self._load_warn = ""        # 直近ロードの非致命的警告（英訳/句読点の失敗）
@@ -147,7 +155,10 @@ class CaptionEngine:
     def _open_log(self, cfg):
         """セッション開始時に logs/日付/日付時刻.log を開く（無効・失敗時は None のまま）"""
         self._logf = None
-        if not cfg.get("save_log", True):
+        self._close_daily_log()
+        self._daily_key = None      # セッションごとに日次ログも開き直す
+        self._save_log = bool(cfg.get("save_log", True))
+        if not self._save_log:
             return
         try:
             now = datetime.now()
@@ -158,19 +169,70 @@ class CaptionEngine:
         except OSError:
             self._logf = None       # 書けなくても認識は続行
 
-    def _log_final(self, text, speaker=""):
-        """確定行を [発言時刻] (話者) 本文 で追記（例外は握りつぶす）"""
-        if self._logf is None:
-            return
+    def _open_daily_log(self, now):
+        """日次ログ（logs/daily/日番号.txt）を「今日」のぶんに合わせて開き直す。
+
+        AI に辞書づくりを手伝わせるための、最近1か月ぶんだけが残るログ。
+        同じ年月のあいだは追記し、既存ファイルの最終更新が別の年月なら
+        truncate してから書く（＝翌月の同じ日に上書きが始まる＝31本で一巡）。
+        セッションが日付を跨いだ場合も (年,月,日) の変化で開き直す。
+        """
+        key = (now.year, now.month, now.day)
+        if self._daily_key == key:
+            return                  # 同じ日のあいだは開きっぱなし
+        self._close_daily_log()
+        self._daily_key = key       # 失敗しても日が変わるまで再試行しない
         try:
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            who = f"[{speaker}] " if speaker else ""
-            self._logf.write(f"[{ts}] {who}{text}\n")
-            self._logf.flush()      # クラッシュしても残るよう都度フラッシュ
+            d = os.path.join(DATA_BASE, "logs", DAILY_LOG_DIR_NAME)
+            os.makedirs(d, exist_ok=True)
+            path = os.path.join(d, f"{now.day:02d}.txt")
+            mode = "a"
+            try:
+                mtime = datetime.fromtimestamp(os.path.getmtime(path))
+                if (mtime.year, mtime.month) != (now.year, now.month):
+                    mode = "w"      # 先月以前の中身 → 捨ててから書き始める
+            except OSError:
+                pass                # まだ無いファイル → 新規作成（"a" のまま）
+            self._dailyf = open(path, mode, encoding="utf-8")
         except OSError:
-            pass
+            self._dailyf = None     # 書けなくても認識は続行
+
+    def _log_final(self, text, speaker=""):
+        """確定行を [発言時刻] (話者) 本文 で追記（例外は握りつぶす）
+
+        セッション別ログ（logs/日付/）と、AI辞書づくり用の日次ログ
+        （logs/daily/）の両方へ同じ行を書く。
+        """
+        if not self._save_log:
+            return
+        now = datetime.now()
+        ts = now.strftime("%Y-%m-%d %H:%M:%S")
+        who = f"[{speaker}] " if speaker else ""
+        line = f"[{ts}] {who}{text}\n"
+        if self._logf is not None:
+            try:
+                self._logf.write(line)
+                self._logf.flush()  # クラッシュしても残るよう都度フラッシュ
+            except OSError:
+                pass
+        self._open_daily_log(now)
+        if self._dailyf is not None:
+            try:
+                self._dailyf.write(line)
+                self._dailyf.flush()
+            except OSError:
+                pass
+
+    def _close_daily_log(self):
+        if self._dailyf is not None:
+            try:
+                self._dailyf.close()
+            except OSError:
+                pass
+            self._dailyf = None
 
     def _close_log(self):
+        self._close_daily_log()
         if self._logf is not None:
             try:
                 self._logf.close()

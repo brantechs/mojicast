@@ -468,6 +468,195 @@ def resolve_style(cfg):
     return out
 
 
+# ---------------- AI辞書インタビュー用のログ書き出し ----------------
+
+# engine.DAILY_LOG_DIR_NAME と同じ値。engine は numpy 等を引き込むので
+# ここでは import せず、名前だけを合わせて持つ（変更時は両方を直す）。
+DAILY_LOG_DIR_NAME = "daily"
+AI_PROMPT_NAME = "AI辞書インタビュー.md"
+
+# Web版のAI（ChatGPT / Claude 等）にzipを渡して使う前提の手順書。
+# 書き出しのたびに上書きするので、アプリ更新で内容が古くなることはない。
+AI_PROMPT_TEXT = """\
+# AIと一緒にMojicastの辞書をつくる
+
+このzipには、Mojicastが書き起こした**字幕ログ**（`logs/` フォルダの `01.txt`〜`31.txt`）と
+このファイルが入っています。ChatGPT や Claude などのWeb版AIに **zipごと（または
+中の .txt をまとめて）添付** して、下の「AIへの依頼文」を貼り付けてください。
+
+誤認識された固有名詞をAIが探し出し、1件ずつ聞き取りながら、Mojicastの辞書に
+そのまま書ける形へまとめてくれます。
+
+---
+
+## AIへの依頼文（ここから下をコピーして貼り付け）
+
+あなたは音声認識の辞書づくりを手伝うアシスタントです。
+
+添付したテキストは、配信ソフト「Mojicast」がリアルタイム音声認識で書き起こした
+字幕ログです。各行は `[YYYY-MM-DD HH:MM:SS] 本文` の形式で、コラボ配信中は
+本文の前に `[話者名]` が付きます。文字起こしは自動なので、固有名詞・作品名・
+専門用語・チャンネル名などが**別の言葉に化けている**ことがあります。
+
+### 手順1: 誤認識らしき語を洗い出す
+
+ログ全体を読み、**文脈的に不自然な単語**を抜き出してください。
+
+- 固有名詞・キャラ名・ゲーム名・専門用語・略語が、意味の通らない語になっている
+- 同じものを指しているのに**表記がゆれている**（例:「意識エモ」「意識へモ」「一色えも」）
+- 前後の話題と無関係な単語が突然まざっている
+
+単なる言い間違い・言い直し・口語表現（「えーと」など）は対象外です。
+**認識ミスらしき語だけ**に絞り、出現回数の多い順・重要そうな順に並べてください。
+まず候補の一覧（語と出現回数）だけを見せてください。
+
+### 手順2: 1件ずつインタビューする
+
+一覧を見せたら、**1件ずつ**私に質問してください。
+一度にまとめて聞かず、**必ず私の回答を待ってから次の1件へ**進みます。
+
+各件では、次を提示・質問してください。
+
+1. 誤認識と思われる語と、**前後の文脈をログから1〜2行そのまま引用**
+2. 「正しい表記（画面に出したい形）は何ですか？」
+3. 「その読み方（ひらがな）は？」
+4. 「配信でよく使う言葉ですか？　言い間違えられやすいですか？」（重要度の参考）
+
+私が「これは誤認識じゃない」と答えたら、その語は候補から外してください。
+
+### 手順3: Mojicastの辞書形式でまとめて出力する
+
+すべて聞き終えたら、結果を下記の形式で、**コピーしやすいコードブロック**にして
+出力してください。該当が無いファイルは省略してかまいません。
+
+#### hotwords.txt（メイン: 認識させる単語）
+
+1行1語のCSVで `表記,読み,出やすさ` です。
+
+```
+# 表記,読み,スコア  （読み・スコアは省略可 / #行はコメント）
+癒色えも,いろえも
+癒色えも,意識へモ／意識エモ
+リーゾンスピーチ,りーぞんすぴーち,3.0
+えもてぃっく
+```
+
+- **表記** … 画面に出したい正しい形
+- **読み** … ひらがなの読み。**または実際に出てしまった誤変換の形**（漢字でもOK）。
+  どちらを書いても「表記」の形に直ります。
+  **漢字を含む語には読みを必ず書いてください**（読みが無いと認識を誘導できません）。
+  間違われ方が複数あるときは **「／」区切り**で並記できます（例: `意識へモ／意識エモ`）。
+  同じ表記の行を分けて何行書いてもかまいません。
+- **出やすさ（スコア）** … 省略可。**空欄＝標準**で、強めたいときだけ
+  **1.5〜4.0** の数値を書きます（効かない→上げる／別の語に誤爆する→下げる）。
+- 読みを省略するときは `えもてぃっく` のように表記だけの1列で書きます。
+
+#### banned.txt（伏せ字にする単語・必要なときだけ）
+
+1行に1語。ここの語は字幕・ログ・翻訳のすべてで伏せ字（○○○）になります。
+
+```
+# 放送禁止ワードなどを1行に1語（#行はコメント）
+伏せたい言葉
+```
+
+#### glossary.txt（英訳を固定する単語・必要なときだけ）
+
+`字幕の表記,英訳` のCSV。日本語→英語の翻訳時に、その語の訳を固定します。
+
+```
+# 英訳辞書: 字幕の表記,英訳  （#行はコメント）
+癒色えも,ISHIKI Emo
+```
+
+### 出力の注意
+
+- 説明文は最小限にして、**そのまま貼り付けられるコードブロック**を主役にしてください。
+- 憶測で単語を増やさないでください。**私が確認した語だけ**を出力してください。
+
+（依頼文はここまで）
+
+---
+
+## 出力をMojicastに取り込む
+
+1. Mojicast の **スタジオ →「📖 単語」→「🎤 認識させる単語」**を開く
+2. AIが出した1行を1行ずつ、`表記` / `読み・実際に出る形` / `出やすさ` の各欄へ入力
+   （「／」区切りの並記もそのまま読み欄に貼り付けられます）
+3. 数が多いときは、**Mojicastを終了してから** `data\\hotwords.txt` を
+   テキストエディタで開き、AIの出力をそのまま貼り付けても同じです（次回起動時に反映）
+4. `🚫 伏せ字にする単語` は `data\\banned.txt`、`🌐 英訳を固定する単語` は
+   `data\\glossary.txt` に対応します
+
+認識させる単語は**次回「▶ 開始」から**反映されます。
+"""
+
+
+def _logs_dir():
+    """文字起こしログの基準フォルダ（engine.py と同じ DATA_BASE/logs）"""
+    return os.path.join(DATA_BASE, "logs")
+
+
+def _daily_logs_dir():
+    return os.path.join(_logs_dir(), DAILY_LOG_DIR_NAME)
+
+
+def _logs_export_dir():
+    """AI辞書用ログのzip置き場。「書き出したものはここ」を1箇所にまとめるため、
+    mojipack（スタイルの書き出し）と同じ data/export を使う。"""
+    return wordstore.data_path(EXPORT_DIR_NAME)
+
+
+def _write_ai_prompt():
+    """AIインタビュー用の手順書を logs/ 直下へ書き出す（毎回上書きで最新化）"""
+    d = _logs_dir()
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, AI_PROMPT_NAME)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(AI_PROMPT_TEXT)
+    return path
+
+
+def _daily_log_files():
+    """日次ログのうち中身のあるファイル（名前順）→ [(パス, ファイル名)]"""
+    d = _daily_logs_dir()
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return []
+    files = []
+    for name in names:
+        p = os.path.join(d, name)
+        try:
+            if os.path.isfile(p) and os.path.getsize(p) > 0:
+                files.append((p, name))
+        except OSError:
+            pass                    # 消えた/読めないファイルは黙って飛ばす
+    return files
+
+
+def export_dict_logs():
+    """日次ログ＋AI用手順書を export/dict_logs_日時.zip にまとめる。
+
+    → (zipのパス, 同梱した日次ログの数)。日次ログが1つも無ければ (None, 0)。
+    """
+    logs = _daily_log_files()
+    if not logs:
+        return None, 0
+    prompt = _write_ai_prompt()
+    d = _logs_export_dir()
+    os.makedirs(d, exist_ok=True)
+    import zipfile
+    from datetime import datetime
+    fname = "dict_logs_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".zip"
+    path = os.path.join(d, fname)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(prompt, AI_PROMPT_NAME)
+        for src, name in logs:
+            z.write(src, f"logs/{name}")
+    return path, len(logs)
+
+
 # ---------------- システムフォント列挙（Windows GDI） ----------------
 
 _fonts_cache = None
@@ -1131,13 +1320,28 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/logs/open":
             # 文字起こしログは engine.py と同じく BASE/logs に保存される。
             # まだ配信していない場合も、入口としてフォルダを作ってから開く。
-            d = os.path.join(DATA_BASE, "logs")
+            # target=export ではAI辞書用zipの置き場（data/export）を開く。
+            d = (_logs_export_dir() if body.get("target") == "export"
+                 else _logs_dir())
             os.makedirs(d, exist_ok=True)
             try:
                 platform_compat.open_folder(d)   # OSのファイラで開く
                 self._json({"ok": True, "path": d})
             except OSError as e:
                 self._json({"ok": False, "error": str(e)}, 500)
+        elif path == "/api/logs/export":
+            # 日次ログ＋AI用手順書をzipにまとめる（AIに渡して辞書をつくる用）
+            try:
+                zpath, count = export_dict_logs()
+            except OSError as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+                return
+            if zpath is None:
+                self._json({"ok": False, "empty": True,
+                            "error": "書き出せるログがまだありません"}, 400)
+                return
+            self._json({"ok": True, "file": os.path.basename(zpath),
+                        "path": zpath, "count": count})
         elif path == "/api/clear":
             broadcast({"type": "clear"})
             self._json({"ok": True})

@@ -24,12 +24,14 @@
   /* 埋め込み時: このページ自身の上位タブ(nav)は非表示（親studioが切替を担う） */
   :root.embed nav { display: none; }
   :root {
+    color-scheme: dark;
     --bg: #0d1117; --panel: #161c26; --panel2: #1c2432;
     --line: #2a3547; --text: #dce6f5; --dim: #7d8ba1;
     --accent: #00e5ff; --ok: #3dffa0; --err: #ff5c5c;
   }
   /* ライトテーマ（GUI窓のみ）。既定はダーク。 */
   :root[data-theme="light"] {
+    color-scheme: light;
     --bg: #f7f9fc; --panel: #ffffff; --panel2: #eef2f8;
     --line: #dbe2ec; --text: #16202e; --dim: #5c6b80;
     --accent: #0499bd; --ok: #12a05f; --err: #d94141;

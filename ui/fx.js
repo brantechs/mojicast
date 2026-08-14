@@ -494,26 +494,33 @@
       if (line._pruning) continue;
       const lr = line.getBoundingClientRect();
       const clipped = vert ? (lr.right > r.right + 1) : (lr.top < r.top - 1);
-      if (clipped) {
-        line._pruning = true;
-        line.animate([{ opacity: 1 }, { opacity: 0 }],
-          { duration: 350, easing: "ease-out", fill: "forwards" })
-          .onfinish = () => line.remove();
-      }
+      if (clipped) FX.fadeOutLine(line, 350);
     }
   };
 
-  /** 自動消去：box.autoClear が真なら clearSec 秒後に行をフェードアウトして消す */
-  FX.scheduleAutoClear = function (line, box) {
-    const sec = box && box.autoClear ? +box.clearSec || 0 : 0;
-    if (sec <= 0) return;
-    setTimeout(() => {
-      if (!line.isConnected || line._pruning) return;
-      line._pruning = true;
-      line.animate([{ opacity: 1 }, { opacity: 0 }],
-        { duration: 600, easing: "ease-out", fill: "forwards" })
-        .onfinish = () => line.remove();
-    }, sec * 1000);
+  /** 行をフェードアウトして取り除く */
+  FX.fadeOutLine = function (line, ms) {
+    if (!line || !line.isConnected || line._pruning) return;
+    line._pruning = true;
+    line.animate([{ opacity: 1 }, { opacity: 0 }],
+      { duration: ms || 600, easing: "ease-out", fill: "forwards" })
+      .onfinish = () => line.remove();
+  };
+
+  /** 無音一括消去：溜まっている行をまとめてフェードアウトして消す */
+  FX.fadeOutAll = function (linesEl) {
+    for (const line of [...linesEl.children]) FX.fadeOutLine(line);
+  };
+
+  /**
+   * 無音一括消去の秒数を正規化して返す（-1 = 消さない）。
+   * 旧キー（autoClear/clearSec）で保存されたボックスもここで読み替える。
+   */
+  FX.clearAllSec = function (box) {
+    if (!box) return -1;
+    if (box.clearAllSec !== undefined && box.clearAllSec !== null)
+      return +box.clearAllSec > 0 ? +box.clearAllSec : -1;
+    return (box.autoClear && +box.clearSec > 0) ? +box.clearSec : -1;
   };
 
   /**

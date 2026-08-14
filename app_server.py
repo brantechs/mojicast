@@ -879,6 +879,22 @@ def _engine_on_final(text, fid, spk=""):
     broadcast({"type": "final", "text": text, "id": fid, "speaker": spk})
 
 
+def translation_slot(cfg, lang):
+    """翻訳先(lang)が設定の何番目か（1〜3・一致しなければ0）。overlayのpart=trN用"""
+    targets = (cfg.get("translate_lang"), cfg.get("translate_lang2"),
+               cfg.get("translate_lang3"))
+    for i, tgt in enumerate(targets, 1):
+        if tgt and tgt == lang:
+            return i
+    return 0
+
+
+def _engine_on_translation(fid, lang, text):
+    # slot（翻訳先の並び順）を添えると、overlay が part=tr1..tr3 で振り分けられる
+    broadcast({"type": "translation", "id": fid, "lang": lang,
+               "slot": translation_slot(load_config(), lang), "text": text})
+
+
 # ---------------- エンジン連携 ----------------
 
 def get_engine():
@@ -893,9 +909,7 @@ def get_engine():
                 on_level=lambda v, spk="": broadcast(
                     {"type": "level", "value": round(v, 3), "speaker": spk}),
                 on_state=_on_state,
-                on_translation=lambda fid, lang, text: broadcast(
-                    {"type": "translation", "id": fid, "lang": lang,
-                     "text": text}),
+                on_translation=_engine_on_translation,
             )
         return _engine
 

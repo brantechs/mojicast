@@ -364,15 +364,22 @@
     margin-right: 8px; vertical-align: -3px; overflow: hidden;
   }
   .preset .mini i { position: absolute; background: var(--accent2); opacity: .75; border-radius: 1px; }
-  .obs {
-    display: flex; gap: 6px; margin-top: 10px;
-  }
-  .obs input { flex: 1; font-size: 12px; color: var(--dim); }
+  /* OBSに表示: 要素（全部入り／文字起こし／翻訳n）ごとのURL行 */
+  .obsrow { margin-top: 10px; }
+  .obsrow-top { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .obsrow-label { flex: 1; }
+  .obsrow-bg { display: flex; align-items: center; gap: 4px; color: var(--dim); }
+  .obsrow-bg input { accent-color: var(--accent); width: 14px; height: 14px; }
+  .obsrow-top input[type=color] { width: 34px; height: 22px; padding: 1px; cursor: pointer;
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; }
+  .obsrow-url { display: flex; gap: 6px; margin-top: 4px; }
+  .obsrow-url input { flex: 1; font-size: 12px; color: var(--dim); }
   footer { padding: 6px 16px; color: var(--dim); font-size: 11px; border-top: 1px solid var(--line); background: var(--panel); }
   .hint { color: var(--dim); font-size: 11px; margin-top: 4px; }
 </style>
 <script src="/ui/i18n.js"></script>
 <script src="/ui/fx.js"></script>
+<script src="/ui/obsurl.js"></script>
 </head>
 <body>
   <header>
@@ -533,10 +540,7 @@
             <div class="gdesc" data-i18n="cp.obs_sub">ブラウザソースにURLを貼り付け</div>
           </div>
         </div>
-        <div class="obs">
-          <input type="text" id="obsUrl" readonly>
-          <button onclick="copyUrl()" data-i18n="cp.copy">コピー</button>
-        </div>
+        <div id="obsList"></div>
         <div class="hint" data-i18n="cp.obs_hint">推奨サイズ: 配信解像度と同じ（例 1920×1080）</div>
         <button class="feature-edit" onclick="openSettings('obs')" style="margin-top:10px" data-i18n="cp.obs_connect">接続設定</button>
       </div>
@@ -725,7 +729,7 @@
     $("translateOn").checked = !!cfg.translate;
   }
   $("wordFx").addEventListener("change", e => { cfg.word_fx = e.target.checked; saveCfg("word_fx"); });
-  $("translateOn").addEventListener("change", e => { cfg.translate = e.target.checked; saveCfg("translate"); });
+  $("translateOn").addEventListener("change", e => { cfg.translate = e.target.checked; renderObsList(); saveCfg("translate"); });
 
   $("device").addEventListener("change", e => {
     cfg.device = e.target.value === "default" ? null : +e.target.value; saveCfg("device");
@@ -792,7 +796,7 @@
     if (cfg.save_log === undefined) cfg.save_log = true;
     syncMovedToggles();  // 高精度/漢数字/単語エフェクト（各カード・詳細へ移動）を反映
     if (!cfg.setup_suggested) initSuggest();   // 初回のみ: 環境に合わせた提案
-    $("obsUrl").value = location.origin + "/";
+    renderObsList();
     const dv = await api("/api/devices");
     const sel = $("device");
     sel.innerHTML = `<option value="default">${T("cp.mic_default", "既定のマイク")}</option>`;
@@ -945,6 +949,7 @@
     renderScenes();    // ボイスコマンド等での切替もシーン選択に追従させる
     syncCollab();      // コラボ窓で変えた方式/相手名をサマリへ反映
     syncMovedToggles();// 別窓で高精度等が変わっていた場合に追従
+    renderObsList();   // 翻訳先の増減をOBS用URLの一覧へ反映
   }
 
   // ---------- レイアウト（プルダウン＋概要ミニ図） ----------
@@ -1037,15 +1042,17 @@
 
   async function clearCaptions() { await api("/api/clear", {}); }
 
-  function copyUrl() {
-    const el = $("obsUrl");
-    el.select();
-    try { navigator.clipboard.writeText(el.value); } catch (e) { document.execCommand("copy"); }
+  // OBS用URLの一覧（要素ごと・背景色つき）。翻訳設定や表示言語が変わったら描き直す
+  function renderObsList() {
+    if (window.ObsUrl) ObsUrl.render($("obsList"), cfg, { onCopy: copyToast });
+  }
+  function copyToast() {
     const toast = $("copyToast");
     toast.classList.add("show");
-    clearTimeout(copyUrl.timer);
-    copyUrl.timer = setTimeout(() => toast.classList.remove("show"), 1600);
+    clearTimeout(copyToast.timer);
+    copyToast.timer = setTimeout(() => toast.classList.remove("show"), 1600);
   }
+  window.addEventListener("mojicast-lang-changed", renderObsList);
 
   // ボイスコマンドの実行結果（サーバーのvcイベント）をトースト表示
   function vcToast(message, ok) {

@@ -194,21 +194,26 @@
     }
   }
 
-  // 確定行(fid)の下に英訳を差し込む。既に見切れて消えた行なら無視。
+  // 確定行(fid)の下に訳文を差し込む。既に見切れて消えた行なら無視。
   // fid は話者をまたいで一意なので全ペインから探す。
-  function addTranslation(id, en) {
-    if (!en || id == null) return;
+  // 翻訳先が2言語のときは言語(lang)ごとに1行ずつ積む（同一fidへ2回届く。
+  // エンジンは第1→第2翻訳先の順で通知するため、表示順も設定順になる）。
+  function addTranslation(id, lang, text) {
+    if (!text || id == null) return;
+    lang = lang || "";
     for (const p of panes.values()) {
       const line = p.finalsEl.querySelector('.line[data-fid="' + id + '"]');
       if (!line) continue;
-      let el = line.querySelector(".en");
+      let el = [...line.querySelectorAll(".en")]
+        .find((e) => (e.dataset.lang || "") === lang);
       if (!el) {
         el = document.createElement("div");
         el.className = "en";
+        el.dataset.lang = lang;
         line.appendChild(el);
       }
       styleEn(el, p.style);
-      el.textContent = en;
+      el.textContent = text;
       return;
     }
   }
@@ -220,7 +225,7 @@
         updatePanes(msg);
         break;
       case "final":   addFinal(paneFor(msg.speaker), msg.text, msg.id); break;
-      case "translation": addTranslation(msg.id, msg.text); break;
+      case "translation": addTranslation(msg.id, msg.lang, msg.text); break;
       case "partial": setPartial(paneFor(msg.speaker), msg.text); break;
       case "clear":
         for (const p of panes.values()) {

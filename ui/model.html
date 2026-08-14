@@ -136,6 +136,24 @@
         <div class="hint">台湾・香港向けは地域ごとの漢字と語彙に整えます。
           認識言語と同じ翻訳先を選ぶと翻訳はスキップされます。</div>
       </div>
+      <div class="row">
+        <label>2つ目の翻訳言語（同時に併記）</label>
+        <select id="transLang2">
+          <option value="">なし（1言語のみ）</option>
+          <option value="en">英語</option>
+          <optgroup label="中国語圏">
+            <option value="zh">中国語（簡体字・中国大陸）</option>
+            <option value="zh_tw">中国語（繁体字・台湾）</option>
+            <option value="zh_hk">中国語（繁体字・香港）</option>
+          </optgroup>
+          <option value="id">インドネシア語</option>
+          <option value="ja">日本語（海外配信の認識と組み合わせて）</option>
+          <option value="ko">韓国語（試験的）</option>
+        </select>
+        <div class="route" id="routeHint2" style="display:none"></div>
+        <div class="hint">確定字幕の下に2言語ぶんの訳文を積んで表示します。
+          翻訳の処理量が増えるため、低スペック機では1言語のみがおすすめです。</div>
+      </div>
     </div>
   </main>
 
@@ -170,30 +188,41 @@
       "日本語の精度は日本語特化がやや上。",
   };
 
+  // 翻訳先1つぶんの経路説明（engine._plan_for_target と同じ判定）
+  function routeText(src, tgt) {
+    const L = { ja: "日", zh: "中", en: "英", ko: "韓", id: "インドネシア",
+      zh_tw: "台湾繁体字", zh_hk: "香港繁体字" };
+    const regional = ["zh_tw", "zh_hk"].includes(tgt);
+    if (src === tgt)
+      return "認識言語と翻訳先が同じため、翻訳はスキップされます";
+    if (src === "zh" && regional)
+      return `使用処理: OpenCC（中→${L[tgt]}）`;
+    let model = src === "ja" && tgt === "en" ? "FuguMT" : "M2M-100";
+    if (regional) model += " ＋ OpenCC";
+    return `使用モデル: ${model}（${L[src] || src}→${L[tgt] || tgt}）`;
+  }
+
   function sync() {
     const sv = cfg.asr_model === "sensevoice";
     $("asrModel").value = cfg.asr_model || "k2-ja";
     $("asrLang").value = cfg.asr_lang || "auto";
     $("transLang").value = cfg.translate_lang || "en";
+    $("transLang2").value = cfg.translate_lang2 || "";
     $("modelDesc").textContent = DESCS[$("asrModel").value];
     $("asrLangRow").style.display = sv ? "" : "none";
-    // 実際に使われる翻訳モデルと方向（engine._translate_plan と同じ判定）
-    const tgt = cfg.translate_lang || "en";
+    // 実際に使われる翻訳モデルと方向
     let src = "ja";
     if (sv && cfg.asr_lang && !["auto", "ja"].includes(cfg.asr_lang))
       src = cfg.asr_lang;
     if (src === "yue") src = "zh";   // 広東語は中文字扱いで翻訳（engineと同じ判定）
-    const L = { ja: "日", zh: "中", en: "英", ko: "韓", id: "インドネシア",
-      zh_tw: "台湾繁体字", zh_hk: "香港繁体字" };
-    const regional = ["zh_tw", "zh_hk"].includes(tgt);
-    if (src === tgt) {
-      $("routeHint").textContent = "認識言語と翻訳先が同じため、翻訳はスキップされます";
-    } else if (src === "zh" && regional) {
-      $("routeHint").textContent = `使用処理: OpenCC（中→${L[tgt]}）`;
-    } else {
-      let model = src === "ja" && tgt === "en" ? "FuguMT" : "M2M-100";
-      if (regional) model += " ＋ OpenCC";
-      $("routeHint").textContent = `使用モデル: ${model}（${L[src] || src}→${L[tgt] || tgt}）`;
+    $("routeHint").textContent = routeText(src, cfg.translate_lang || "en");
+    const tgt2 = cfg.translate_lang2 || "";
+    $("routeHint2").style.display = tgt2 ? "" : "none";
+    if (tgt2) {
+      $("routeHint2").textContent =
+        tgt2 === (cfg.translate_lang || "en")
+          ? "1つ目と同じ翻訳先のため、1言語だけ表示されます"
+          : routeText(src, tgt2);
     }
   }
 
@@ -206,6 +235,9 @@
   $("transLang").addEventListener("change", () => {
     save({ translate_lang: $("transLang").value }); sync();
   });
+  $("transLang2").addEventListener("change", () => {
+    save({ translate_lang2: $("transLang2").value }); sync();
+  });
 
   // 認識が動作中なら「停止→開始で反映」の警告を出す（保存のたびに再確認）
   async function checkRunning() {
@@ -214,7 +246,7 @@
       $("runWarn").style.display = st.state === "running" ? "" : "none";
     } catch (e) {}
   }
-  for (const id of ["asrModel", "asrLang", "transLang"])
+  for (const id of ["asrModel", "asrLang", "transLang", "transLang2"])
     $(id).addEventListener("change", checkRunning);
 
   (async () => {

@@ -724,7 +724,11 @@
     zh_hk: "香港繁体字訳", id: "インドネシア語訳", ja: "日本語訳", ko: "韓国語訳" };
   function syncModelCard() {
     const lang = cfg.translate_lang || "en";
-    $("transFeatureLabel").textContent = T("trg." + lang, TR_NAMES[lang] || "英訳");
+    let label = T("trg." + lang, TR_NAMES[lang] || "英訳");
+    const lang2 = cfg.translate_lang2 || "";
+    if (lang2 && lang2 !== lang)
+      label += "＋" + T("trg." + lang2, TR_NAMES[lang2] || lang2);
+    $("transFeatureLabel").textContent = label;
   }
 
   // コックピットに残す配信中の機能トグル
@@ -931,7 +935,8 @@
 
   // 反映に再起動（停止→開始）が必要な設定キー。別窓（モデル/コラボ等）での
   // 変更もSSE経由でここを通るので、変化を見つけたら警告バーを出す
-  const RESTART_KEYS = ["asr_model", "asr_lang", "translate_lang", "precision",
+  const RESTART_KEYS = ["asr_model", "asr_lang", "translate_lang",
+    "translate_lang2", "precision",
     "device", "silence_ms", "interval", "max_utt", "hotwords_score",
     "use_hotwords", "word_profile", "collab", "collab_source",
     "collab_process", "collab_device", "self_name", "guest_name",
@@ -1232,13 +1237,15 @@
     while (monitor.children.length > MON_MAX) monitor.removeChild(monitor.firstChild);
     monitor.scrollTop = monitor.scrollHeight;
   }
-  function monTranslation(id, en) {
-    if (!en || id == null) return;
+  function monTranslation(id, lang, text) {
+    if (!text || id == null) return;
     const d = monitor.querySelector('[data-fid="' + id + '"]');
     if (!d) return;
-    let el = d.querySelector(".en");
-    if (!el) { el = document.createElement("div"); el.className = "en"; d.appendChild(el); }
-    el.textContent = en;
+    // 翻訳先が2言語のときは言語ごとに1行ずつ積む（overlayと同じ振り分け）
+    lang = lang || "";
+    let el = [...d.querySelectorAll(".en")].find((e) => (e.dataset.lang || "") === lang);
+    if (!el) { el = document.createElement("div"); el.className = "en"; el.dataset.lang = lang; d.appendChild(el); }
+    el.textContent = text;
     styleEnLine(el);
   }
 
@@ -1250,7 +1257,7 @@
       else if (m.type === "init") { if (m.state) setState(m.state.state, m.state.detail); setPreviewStyle(m); }
       else if (m.type === "partial") monPartial(m.text, m.speaker);
       else if (m.type === "final") monFinal(m.text, m.id, m.speaker);
-      else if (m.type === "translation") monTranslation(m.id, m.text);
+      else if (m.type === "translation") monTranslation(m.id, m.lang, m.text);
       else if (m.type === "level") $("meterBar").style.width = (m.value * 100) + "%";
       else if (m.type === "clear") { monitor.innerHTML = ""; partials.clear(); }
       else if (m.type === "style") { setPreviewStyle(m); refreshPresets(); }

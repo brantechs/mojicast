@@ -500,7 +500,7 @@
           </div>
           <div class="feature-row">
             <span class="feature-icon">🌐</span>
-            <span class="feature-copy"><b id="transFeatureLabel">英訳</b><span data-i18n="cp.trans_d">翻訳字幕を一緒に表示</span></span>
+            <span class="feature-copy"><b data-i18n="cp.trans">翻訳</b><span id="transFeatureDesc">翻訳字幕を一緒に表示</span></span>
             <button class="feature-edit" onclick="openStudio('pillar=translation')" data-i18n="cp.configure">設定</button>
             <input type="checkbox" id="translateOn">
           </div>
@@ -717,19 +717,23 @@
     openSettings("hearing");
   }
 
-  // 翻訳チップの表示名（英訳/中国語訳など）を設定に同期
   // i18n: 訳語を引く（ja既定を同梱・i18n.js未読込でも安全）
   const T = (key, jaDefault) => window.MojicastI18n ? window.MojicastI18n.t(key, jaDefault) : jaDefault;
-  const TR_NAMES = { en: "英訳", zh: "中国語訳", zh_tw: "台湾繁体字訳",
-    zh_hk: "香港繁体字訳", id: "インドネシア語訳", ja: "日本語訳", ko: "韓国語訳" };
+  // 翻訳先の言語名（チップの説明行に並べる。見出しは常に「翻訳」で固定）
+  const TR_NAMES = { en: "英語", zh: "中国語", zh_tw: "台湾繁体字",
+    zh_hk: "香港繁体字", id: "インドネシア語", ja: "日本語", ko: "韓国語" };
   function syncModelCard() {
-    // 翻訳先は最大3言語。重複と空を除いて設定順に「＋」で連結する
+    // 翻訳先は最大3言語。重複と空を除いて設定順に並べ、説明行へ内訳を出す。
+    // 翻訳オフ・翻訳先が無いときは従来どおりの文言のまま
     const langs = [];
     for (const l of [cfg.translate_lang || "en", cfg.translate_lang2 || "",
                      cfg.translate_lang3 || ""])
       if (l && !langs.includes(l)) langs.push(l);
-    $("transFeatureLabel").textContent =
-      langs.map(l => T("trg." + l, TR_NAMES[l] || l)).join("＋");
+    $("transFeatureDesc").textContent = (cfg.translate && langs.length)
+      ? T("cp.trans_d_langs", "{langs}を一緒に表示").replace("{langs}",
+          langs.map(l => T("cp.tl_" + l, TR_NAMES[l] || l))
+            .join(T("cp.lang_sep", "・")))
+      : T("cp.trans_d", "翻訳字幕を一緒に表示");
   }
 
   // コックピットに残す配信中の機能トグル
@@ -738,7 +742,7 @@
     $("translateOn").checked = !!cfg.translate;
   }
   $("wordFx").addEventListener("change", e => { cfg.word_fx = e.target.checked; saveCfg("word_fx"); });
-  $("translateOn").addEventListener("change", e => { cfg.translate = e.target.checked; saveCfg("translate"); });
+  $("translateOn").addEventListener("change", e => { cfg.translate = e.target.checked; saveCfg("translate"); syncModelCard(); });
 
   $("device").addEventListener("change", e => {
     cfg.device = e.target.value === "default" ? null : +e.target.value; saveCfg("device");

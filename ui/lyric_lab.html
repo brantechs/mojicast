@@ -4,6 +4,29 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>リリック演出ラボ</title>
+  <script>
+    // スタジオ・アプリ設定と同じサブ窓で開く画面。表示倍率(s)・テーマはURLでしか
+    // 伝わらないため、受け取って適用し、戻るときも同じ値を引き継ぐ。
+    (function () {
+      const q = new URLSearchParams(location.search);
+      const s = parseFloat(q.get("s"));
+      if (s > 0 && s < 1) document.documentElement.style.zoom = s;
+      try {
+        const theme = q.get("theme") || localStorage.getItem("mojicast-theme");
+        if (theme === "light") document.documentElement.dataset.theme = "light";
+        else if (theme === "dark") delete document.documentElement.dataset.theme;
+      } catch (e) {}
+    })();
+    // 戻り先はスタジオの「字幕」。新しい窓は開かず、この窓のまま遷移する。
+    function backToStudio() {
+      const q = new URLSearchParams(location.search);
+      const keep = ["pillar=captions"];
+      for (const key of ["s", "v"])
+        if (q.get(key)) keep.push(`${key}=${encodeURIComponent(q.get(key))}`);
+      keep.push("theme=" + (document.documentElement.dataset.theme === "light" ? "light" : "dark"));
+      location.href = "/ui/studio?" + keep.join("&");
+    }
+  </script>
   <style>
     :root {
       color-scheme: dark;
@@ -175,6 +198,9 @@
     .btn:hover { border-color: rgba(142,125,255,.62); transform: translateY(-1px); }
     .btn.primary { border-color: transparent; color: #fff; background: linear-gradient(135deg, #745cff, #9e65ed); }
     .btn.active { color: #fff; border-color: var(--accent); background: rgba(118,91,255,.25); }
+    .btn.back { min-height: 28px; margin-bottom: 7px; padding: 0 10px; color: var(--muted);
+      border-radius: 8px; font-size: 12px; font-weight: 700; }
+    .btn.back:hover { color: var(--text); }
     .side { min-height: 0; overflow: auto; padding: 17px; }
     .section + .section { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
     .section-title { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
@@ -231,6 +257,7 @@
     <section class="workspace">
       <header class="topbar">
         <div>
+          <button class="btn back" onclick="backToStudio()" data-i18n="ly.back_studio">← スタジオへ戻る</button>
           <h1 data-i18n="ly.title">リリック演出ラボ</h1>
           <div class="subtitle" data-i18n="ly.subtitle">WebViewで動く表現を、配信の流れとして比較する試作画面</div>
         </div>

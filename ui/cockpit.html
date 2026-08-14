@@ -1073,11 +1073,17 @@
   }
 
   // ---------- 字幕スタジオ（見た目・言葉） / アプリ設定（機器・AI・接続） ----------
+  // スタジオもアプリ設定も、コックピットの次に開く「サブ窓1つ」を共有する。
+  // ブラウザで開いた場合もタブが増えないよう、同じ窓名を使い回す。
+  const SUB_TARGET = "mojicastSub";
+  function openSubWindow(path, query) {
+    window.open(path + (query ? "?" + query : ""), SUB_TARGET, "width=1120,height=840");
+  }
   function openStudio(query) {
     if (window.pywebview && window.pywebview.api && window.pywebview.api.open_studio) {
       window.pywebview.api.open_studio(query || "");
     } else {
-      window.open("/ui/studio" + (query ? "?" + query : ""), "_blank", "width=1120,height=840");
+      openSubWindow("/ui/studio", query);
     }
   }
   function openSettings(section) {
@@ -1085,7 +1091,7 @@
     if (window.pywebview && window.pywebview.api && window.pywebview.api.open_settings) {
       window.pywebview.api.open_settings(query);
     } else {
-      window.open("/ui/settings" + (query ? "?" + query : ""), "_blank", "width=980,height=760");
+      openSubWindow("/ui/settings", query);
     }
   }
   function openWords() { openStudio("tab=words"); }

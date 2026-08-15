@@ -840,6 +840,11 @@ class CaptionEngine:
                             if self._asr_caps.get("spaces"):
                                 from asr_model import strip_cjk_spaces
                                 p = strip_cjk_spaces(p)
+                            if self._replacer is not None:
+                                # 認識中(薄文字)も登録単語の表記へ寄せる。確定で
+                                # 表記が変わると「登録が効いていない」ように見え、
+                                # 薄文字のエフェクト照合も外れるため
+                                p = self._replacer(p)
                             if (cfg.get("num_arabic", True)
                                     and not self._asr_caps.get("punct")):
                                 p = normalize_numbers(p)

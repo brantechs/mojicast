@@ -33,6 +33,45 @@ def _split_readings(reading: str):
     return [r.strip() for r in re.split(r"[／/]", reading or "") if r.strip()]
 
 
+# かなの表記ゆれ（ひらがな⇄カタカナ）を吸収するための対応表。
+# ぁ(U+3041)〜ゖ(U+3096) と ァ(U+30A1)〜ヶ(U+30F6) は 0x60 ずれの同順。
+# 「ー」「・」等はどちらの表記でも共通なのでそのまま通す。
+_KANA_SHIFT = 0x60
+_KANA_COMMON = "ー゛゜・ｰ"
+
+
+def _is_kana(s: str) -> bool:
+    """語全体がかな（＋長音符など）だけで出来ているか"""
+    if not s:
+        return False
+    return all("ぁ" <= c <= "ゖ" or "ァ" <= c <= "ヶ"
+               or c in _KANA_COMMON for c in s)
+
+
+def _to_hiragana(s: str) -> str:
+    return "".join(chr(ord(c) - _KANA_SHIFT) if "ァ" <= c <= "ヶ"
+                   else c for c in s)
+
+
+def _to_katakana(s: str) -> str:
+    return "".join(chr(ord(c) + _KANA_SHIFT) if "ぁ" <= c <= "ゖ"
+                   else c for c in s)
+
+
+def expand_kana(forms):
+    """かな語の表記ゆれ（ひらがな⇄カタカナ）を足した一覧を返す（順序保持・重複なし）
+
+    「ぶらんち」だけ登録すれば認識結果の「ブランチ」も同じ語として扱える。
+    漢字・英数字を含む語は変換しない（誤爆を避けるため、全部かなの語だけ）。
+    """
+    out = []
+    for f in forms:
+        for v in (f, _to_hiragana(f), _to_katakana(f)) if _is_kana(f) else (f,):
+            if v and v not in out:
+                out.append(v)
+    return out
+
+
 def parse_vocab(path: str):
     """語彙ファイルを (表記, 読み, スコア) のリストに読み込む"""
     entries = []
@@ -56,7 +95,9 @@ def write_hotwords(entries, out_path: str | None = None) -> str:
         os.close(fd)
     with open(out_path, "w", encoding="utf-8") as f:
         for _surface, reading, score in entries:
-            for r in _split_readings(reading):
+            # かな語はひらがな形・カタカナ形の両方を誘導対象にする。
+            # モデルがどちらの形で出すかは語によって違うため（ぶらんち/ブランチ）
+            for r in expand_kana(_split_readings(reading)):
                 line = r
                 if score:
                     line += f" :{score}"
@@ -70,10 +111,15 @@ def build_replacer(entries):
     - 読み欄の「／」区切り複数形にそれぞれ対応
     - SenseVoice等が単語の途中に句読点を挟むケース（「意識、エモ」）にも
       当たるよう、文字間に句読点・空白を許す寛容マッチも行う
+    - かな語はひらがな⇄カタカナの表記ゆれも同じ表記へ寄せる。認識モデルが
+      かな語をどちらで出すかは選べないため（表記「ぶらんち」でも認識結果は
+      「ブランチ」になる）、読みを書かなくても表記に統一される。
+      これでエフェクト単語（表記で照合）も取りこぼさない。
     """
     pairs = []
     for surface, reading, _ in entries:
-        for r in _split_readings(reading):
+        # 読みだけでなく表記自身のかな別形も拾う（表記「ぶらんち」⇄「ブランチ」）
+        for r in expand_kana(_split_readings(reading) + [surface]):
             if r != surface:
                 pairs.append((r, surface))
     if not pairs:

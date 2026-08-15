@@ -166,6 +166,20 @@
     FX.fadeOutAll(p.finalsEl);
   }
 
+  // 「保持する行数」は“画面に見える行数”。認識中の薄文字も1行として数える。
+  // 数えないと maxLines=2 でも 確定2行＋薄文字1行＝3行に見えてしまう。
+  // 消えかけ（フェード中）の行は数に入れない＝同じ行を二重に削らない。
+  function trimLines(p, fade) {
+    const partialShown = p.partialEl.style.display !== "none"
+                         && !!p.partialEl.textContent;
+    const limit = Math.max(1, (p.box.maxLines || 30) - (partialShown ? 1 : 0));
+    const live = FX.liveLines(p.finalsEl);
+    for (let i = 0; i < live.length - limit; i++) {
+      if (fade) FX.fadeOutLine(live[i], 250);   // 薄文字が出た分は滑らかに引く
+      else live[i].remove();                    // 追加時はスクロール補正に任せて即時
+    }
+  }
+
   // 1行ぶんの要素をペインへ流し込む（スクロール・行数トリム・見切れ掃除）
   function pushLine(p, div) {
     FX.applyEntrance(div, p.style.animIn || "slide");
@@ -173,8 +187,7 @@
     FX.smoothAppend(p.scroller, p.box, () => {
       p.partialEl.textContent = "";
       p.finalsEl.appendChild(div);
-      while (p.finalsEl.children.length > (p.box.maxLines || 30))
-        p.finalsEl.removeChild(p.finalsEl.firstChild);
+      trimLines(p);
     });
     FX.burstLine(div);          // パーティクル発射（登録単語があれば）
     armClear(p);
@@ -219,6 +232,7 @@
     else
       p.partialEl.textContent = text || "";
     if (text) armClear(p);   // 話している間は一括消去を待たせる
+    trimLines(p, true);      // 薄文字も1行ぶん占めるので確定行を1本ぶん譲る
     // パーシャルが伸びて上の行が見切れたら掃除
     FX.pruneClipped(p.clipEl, p.finalsEl, p.box);
   }

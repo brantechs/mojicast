@@ -507,6 +507,11 @@
       .onfinish = () => line.remove();
   };
 
+  /** 消えかけ（フェードアウト中）を除いた「まだ画面に居座る行」を返す */
+  FX.liveLines = function (linesEl) {
+    return [...linesEl.children].filter(l => !l._pruning);
+  };
+
   /** 無音一括消去：溜まっている行をまとめてフェードアウトして消す */
   FX.fadeOutAll = function (linesEl) {
     for (const line of [...linesEl.children]) FX.fadeOutLine(line);

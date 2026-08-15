@@ -1,5 +1,5 @@
 {
-  "version": "0.7.1",
+  "version": "0.7.2",
   "url": "https://emo-ishiki.booth.pm/items/8643987",
-  "notes": "macOS（Apple Silicon）版を追加。初回モデルDLの進捗表示を修正"
+  "notes": "翻訳を最大3言語まで併記。OBS要素の分離と前の字幕の消し方を追加。単語登録のかな表記ゆれを吸収"
 }

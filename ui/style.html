@@ -105,6 +105,10 @@
   input[type=color] { width: 100%; height: 32px; padding: 2px; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
   .chk { display: flex; align-items: center; gap: 8px; color: var(--dim); padding-top: 18px; }
   .chk input { accent-color: var(--accent); width: 15px; height: 15px; }
+  /* 2択のラジオ行（.fr の中身。チェック行と同じ配色） */
+  .radios { display: flex; align-items: center; gap: 14px; color: var(--dim); }
+  .fr .radios label { display: flex; align-items: center; gap: 5px; margin: 0; cursor: pointer; }
+  .radios input { accent-color: var(--accent); width: 15px; height: 15px; }
   /* 文字プレビュー */
   #previewBox {
     margin-top: 10px; border-radius: 10px; padding: 26px 20px 18px;
@@ -263,6 +267,11 @@
         <div class="fr only-flow advanced-only"><label data-i18n="sy.text_align">文字揃え</label>
           <select id="b_align"><option value="left" data-i18n="sy.align_left">左揃え</option><option value="center" data-i18n="sy.align_center">中央</option><option value="right" data-i18n="sy.align_right">右揃え</option></select></div>
         <div class="fr only-flow advanced-only"><label><span data-i18n="sy.max_lines">保持する行数</span> <output id="o_bml"></output></label><input type="range" id="b_maxLines" min="2" max="40" step="1"></div>
+        <div class="fr only-flow advanced-only"><label data-i18n="sy.clear_mode">前の字幕の扱い</label>
+          <div class="radios">
+            <label><input type="radio" name="b_clearMode" value="keep"><span data-i18n="sy.clear_mode_keep">残す</span></label>
+            <label><input type="radio" name="b_clearMode" value="speech"><span data-i18n="sy.clear_mode_speech">話している間に消える</span></label>
+          </div></div>
         <div class="fr chk only-flow advanced-only"><input type="checkbox" id="b_smooth"><span data-i18n="sy.smooth_scroll">スムーズスクロール</span></div>
         <div class="fr only-flow advanced-only"><label><span data-i18n="sy.scroll_speed">スクロール速度</span> <output id="o_bsm"></output></label><input type="range" id="b_smoothMs" min="100" max="600" step="50"></div>
         <div class="fr only-flow advanced-only"><label><span data-i18n="sy.clear_all">無音のあと字幕をまとめて消す</span><span data-i18n="sy.clear_all_hint">（-1 = 消さない）</span></label><input type="number" id="b_clearAllSec" min="-1" max="600" step="1"></div>
@@ -635,6 +644,14 @@
       el.style.display = lyric ? "" : "none";
   }
 
+  // 「前の字幕の扱い」ラジオ（keep / speech）の読み書き
+  function clearModes() { return document.querySelectorAll('input[name="b_clearMode"]'); }
+  function setClearMode(v) { for (const r of clearModes()) r.checked = (r.value === v); }
+  function getClearMode() {
+    for (const r of clearModes()) if (r.checked) return r.value;
+    return "keep";
+  }
+
   function loadBoxForm() {
     const b = boxes[curBox];
     $("editBoxName").textContent = b.name;
@@ -653,6 +670,7 @@
     setR("b_borderWidth", "o_bbw", b.borderWidth ?? 0, v => v + "px");
     $("b_align").value = b.align || "left";
     setR("b_maxLines", "o_bml", b.maxLines ?? 20, v => v + "行");
+    setClearMode(b.clearOnSpeech ? "speech" : "keep");
     $("b_smooth").checked = b.smooth !== false;
     setR("b_smoothMs", "o_bsm", b.smoothMs ?? 250, v => v + "ms");
     $("b_clearAllSec").value = FX.clearAllSec(b);   // 旧キー(autoClear/clearSec)も読み替え
@@ -707,6 +725,7 @@
     b.borderWidth = +$("b_borderWidth").value;
     b.align = $("b_align").value;
     b.maxLines = +$("b_maxLines").value;
+    b.clearOnSpeech = getClearMode() === "speech";
     b.smooth = $("b_smooth").checked;
     b.smoothMs = +$("b_smoothMs").value;
     b.clearAllSec = +$("b_clearAllSec").value || -1;
@@ -768,6 +787,8 @@
       return;
     }
     const sc = $("stageScroll");
+    // 「話している間に消える」の近似プレビュー（次の発話＝次の行の直前に前を消す）
+    if (b.clearOnSpeech) FX.fadeOutAll(sc);
     FX.smoothAppend(sc, b, () => {
       const d = document.createElement("div");
       d.className = "line";
@@ -894,6 +915,8 @@
         $("editBoxName").textContent = boxes[curBox].name;
         renderBoxList();
         if (el.id === "b_mode") { updateModeRows(); stageClear(); stageAdd(); }
+        // 前の字幕の扱いは行の増え方が変わるので、ステージを積み直して見せる
+        if (el.name === "b_clearMode") { stageClear(); stageAdd(); stageAdd(); }
         clearTimeout(bt);
         bt = setTimeout(stageApply, 120);
       });

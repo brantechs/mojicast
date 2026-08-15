@@ -15,6 +15,7 @@ transcribe_stream.py の疑似ストリーミング処理を、開始/停止で�
                             届く＝最大3言語ぶん）
 """
 import os
+import json
 import time
 import queue
 import threading
@@ -36,6 +37,12 @@ VAD_MODEL_PATH = os.path.join(BASE, "silero_vad.onnx")
 # ファイルを上書きするので、常に「直近1か月ぶん」だけが残る。
 # app_server.py の書き出し（/api/logs/export）もこの名前を参照する。
 DAILY_LOG_DIR_NAME = "daily"
+
+# 開発者ログ（cfg["dev_log"]）の拡張子。セッション別の字幕ログ（.log）と同じ
+# フォルダに、同じ名前で対にして置く（2026-08-16_213000.log / .jsonl）。
+# 1行1イベントのJSONで、確定文の後処理と翻訳の入出力を時刻つきで残す。
+# 「訳文だけおかしい」たぐいの不具合を、あとから字幕ログと突き合わせるためのもの。
+DEV_LOG_EXT = ".jsonl"
 
 # 過負荷やデバイス異常時にもメモリを無制限に使わないための待ち行列上限。
 # 音声は約30秒、翻訳は128発話ぶんを保持する。通常配信では到達しない余裕を
@@ -82,6 +89,16 @@ def _offer_bounded_latest(q, item, recover_to):
         # ブロックしてまで入れない。いずれにせよメモリ上限は維持される。
         dropped += 1
     return dropped
+
+
+def _note_step(steps, name, text):
+    """確定文の後処理を1段階ぶん記録する（開発者ログ用）。
+
+    steps が None（開発者モードOFF）なら何もしない。文が変わらなかった段階は
+    残さないので、ログを見れば「どの処理が文を壊したか」だけが並ぶ。
+    """
+    if steps is not None and steps[-1][1] != text:
+        steps.append((name, text))
 
 
 def _hub_dir():
@@ -132,6 +149,8 @@ class CaptionEngine:
         self._dailyf = None         # 日次ログ logs/daily/日番号.txt のハンドル
         self._daily_key = None      # 日次ログを開いた (年, 月, 日)。変わったら開き直す
         self._save_log = False      # 文字起こしログを残す設定か
+        self._devf = None           # 開発者ログ(jsonl)のハンドル（OFF時 None）
+        self._dev_lock = threading.Lock()   # 認識2スレッド＋翻訳ワーカーの書き込みを直列化
         self._mask = None           # 禁止ワードの伏せ字化関数（無効時 None）
         self._gloss = None          # 英訳辞書 [(表記, 英訳)]（無効時 None）
         self._load_warn = ""        # 直近ロードの非致命的警告（英訳/句読点の失敗）
@@ -157,6 +176,7 @@ class CaptionEngine:
         self._logf = None
         self._close_daily_log()
         self._daily_key = None      # セッションごとに日次ログも開き直す
+        self._open_dev_log(cfg)     # 開発者ログは save_log とは独立に開く
         self._save_log = bool(cfg.get("save_log", True))
         if not self._save_log:
             return
@@ -231,7 +251,87 @@ class CaptionEngine:
                 pass
             self._dailyf = None
 
+    # ---------------- 開発者ログ（jsonl） ----------------
+
+    def _open_dev_log(self, cfg):
+        """開発者モードONのときだけ logs/日付/日付時刻.jsonl を開く。
+
+        字幕ログ（save_log）とは独立に開閉する。不具合報告を頼むときに
+        「配信内容のテキストは残したくないが詳細は欲しい」も、その逆もあるため。
+        """
+        self._close_dev_log()
+        if not cfg.get("dev_log", False):
+            return
+        try:
+            now = datetime.now()
+            d = os.path.join(DATA_BASE, "logs", now.strftime("%Y-%m-%d"))
+            os.makedirs(d, exist_ok=True)
+            path = os.path.join(
+                d, now.strftime("%Y-%m-%d_%H%M%S") + DEV_LOG_EXT)
+            self._devf = open(path, "a", encoding="utf-8")
+        except OSError:
+            self._devf = None       # 書けなくても認識は続行
+            return
+        # セッションの前提（どのモデルで・どこへ翻訳したか）を先頭に1行残す。
+        # 訳文の不具合は経路依存なので、これが無いと後から再現できない。
+        self._dev_event(
+            "session",
+            asr_model=cfg.get("asr_model", ""), asr_lang=cfg.get("asr_lang", ""),
+            translate=bool(cfg.get("translate", False)),
+            langs=[cfg.get("translate_lang", ""), cfg.get("translate_lang2", ""),
+                   cfg.get("translate_lang3", "")],
+            punctuate=bool(cfg.get("punctuate", True)),
+            num_arabic=bool(cfg.get("num_arabic", True)),
+            word_profile=cfg.get("word_profile", ""),
+            save_log=bool(cfg.get("save_log", True)))
+
+    def _dev_event(self, ev, **fields):
+        """開発者ログへ1行（JSON）追記する（OFF・失敗時は何もしない）。
+
+        時刻は字幕ログの `[YYYY-MM-DD HH:MM:SS]` と突き合わせられるよう
+        同じ書式にミリ秒を足したもの。例外は握りつぶす（字幕を止めない）。
+        """
+        if self._devf is None:
+            return
+        rec = {"ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+               "ev": ev}
+        rec.update(fields)
+        try:
+            line = json.dumps(rec, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return                  # 想定外の値が混じっても落とさない
+        with self._dev_lock:
+            if self._devf is None:  # 停止と同時に閉じられた
+                return
+            try:
+                self._devf.write(line + "\n")
+                self._devf.flush()  # クラッシュしても残るよう都度フラッシュ
+            except (OSError, ValueError):
+                pass
+
+    def _dev_final(self, fid, speaker, text, steps):
+        """確定文1行ぶんを開発者ログへ（後処理の各段階つき）。
+
+        fid が None なら後処理で消えた行（画面にも字幕ログにも出ない）。
+        認識そのものが空だった呼び出しは記録しない（無音のたびに増えるため）。
+        """
+        if steps is None or not steps[0][1]:
+            return
+        self._dev_event("final" if fid is not None else "drop",
+                        fid=fid, speaker=speaker, text=text,
+                        steps=[{"by": n, "text": t} for n, t in steps])
+
+    def _close_dev_log(self):
+        with self._dev_lock:
+            f, self._devf = self._devf, None
+        if f is not None:
+            try:
+                f.close()
+            except OSError:
+                pass
+
     def _close_log(self):
+        self._close_dev_log()
         self._close_daily_log()
         if self._logf is not None:
             try:
@@ -651,12 +751,29 @@ class CaptionEngine:
                     for ja, en_word in self._gloss:
                         if ja in src_text:
                             src_text = src_text.replace(ja, en_word)
+                t0 = time.time()
+                err = ""
                 try:
                     out = fn(src_text)
-                except Exception:
+                except Exception as e:
                     out = ""      # 翻訳失敗は無視（字幕本体は出続ける）
+                    err = repr(e)
                     self._log_translate_error(src_text)
-                if out and self._translate_on:
+                shown = bool(out) and self._translate_on
+                if self._devf is not None:
+                    rec = {"fid": fid, "engine": eng, "lang": tgt,
+                           "src": text, "out": out,
+                           "ms": round((time.time() - t0) * 1000, 1)}
+                    if src_text != text:
+                        rec["glossed"] = src_text   # 英訳辞書で置換した実入力
+                    if err:
+                        rec["error"] = err
+                    if not shown:
+                        # 空訳・停止直後で画面に出なかった。訳文が「出ない」
+                        # 不具合と「変」な不具合を区別するために残す。
+                        rec["shown"] = False
+                    self._dev_event("translate", **rec)
+                if shown:
                     self.on_translation(fid, tgt, out)
 
     def _log_translate_error(self, text):
@@ -784,34 +901,47 @@ class CaptionEngine:
                         text = self._recognize(samples)
                         self.perf["final_n"] += 1
                         self.perf["final_ms"] += (time.time() - t0) * 1000
+                        # 開発者モードON時だけ後処理の途中経過を持ち回る（OFF=None）
+                        steps = [("asr", text)] if self._devf is not None else None
                         if text:
                             if self._asr_caps.get("spaces"):
                                 from asr_model import strip_cjk_spaces
                                 text = strip_cjk_spaces(text)
+                                _note_step(steps, "spaces", text)
                             if self._replacer is not None:
                                 text = self._replacer(text)
+                                _note_step(steps, "replace", text)
                             # SenseVoice系は句読点・数字正規化(ITN)を内蔵しているため
                             # 後段のnumnorm/BERTはスキップ（日本語以外にBERTは使えない）
                             if (cfg.get("num_arabic", True)
                                     and not self._asr_caps.get("punct")):
                                 text = normalize_numbers(text)   # 三十五 → 35
+                                _note_step(steps, "num", text)
                             if (self._punct is not None
                                     and cfg.get("punctuate", True)
                                     and not self._asr_caps.get("punct")):
                                 text = self._punct(text)
+                                _note_step(steps, "punct", text)
                             if self._mask is not None:      # 禁止ワードを伏せ字化
                                 text = self._mask(text)
+                                _note_step(steps, "mask", text)
                         if text:
                             fid = self._next_fid()
                             self.on_final(text, fid, speaker)
                             self._log_final(text, speaker)
+                            self._dev_final(fid, speaker, text, steps)
                             if self._translate_on:
-                                _offer_bounded_latest(
+                                dropped = _offer_bounded_latest(
                                     self._tq, (fid, text),
                                     TRANSLATION_QUEUE_RECOVER_ITEMS)
+                                if dropped:
+                                    # 翻訳が追いつかず捨てた行。訳文の欠落・ずれの
+                                    # 原因になるので開発者ログには必ず残す。
+                                    self._dev_event("tq_drop", fid=fid, n=dropped)
                         else:
                             # 後処理で空になった発話は出さず、薄文字だけ消す
                             self.on_partial("", speaker)
+                            self._dev_final(None, speaker, text, steps)
                         last_partial_len = 0
                         partial_gap = interval_samples   # 新しい発話は素早く出す
 

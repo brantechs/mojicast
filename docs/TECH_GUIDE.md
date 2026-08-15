@@ -143,3 +143,26 @@ CPU使用率は「誰かが喋っている間」だけ上がり、無音の間�
 | `logs\load_error.log` | 句読点・翻訳モデルのロード失敗の詳細（報告時に添付を） |
 | `translate_error.log` | 翻訳の実行時エラーの詳細 |
 | `logs\日付\*.log` | 文字起こしログ（マニュアル8章参照） |
+| `logs\日付\*.jsonl` | 開発者ログ（下記）。同じ名前の `.log` と対になる |
+
+### 開発者ログ（`dev_log`）
+
+アプリ設定「その他 → 開発者向け → 開発者ログを残す」をオンにしたセッションだけ、
+確定文の後処理と翻訳の入出力を 1行1件のJSONで残す（既定オフ・`save_log` とは独立）。
+「特定の訳文だけ壊れる」たぐいの不具合は、これが無いと**入力も経路も再現できない**。
+
+```jsonl
+{"ts":"2026-08-16 21:30:02.114","ev":"session","asr_model":"k2-ja","translate":true,"langs":["en","zh",""],...}
+{"ts":"2026-08-16 21:30:09.882","ev":"final","fid":3,"speaker":"","text":"35点だった。",
+ "steps":[{"by":"asr","text":"三十五点だった"},{"by":"num","text":"35点だった"},{"by":"punct","text":"35点だった。"}]}
+{"ts":"2026-08-16 21:30:10.401","ev":"translate","fid":3,"engine":"fugumt","lang":"en",
+ "src":"35点だった。","out":"It was 35 points.","ms":486.2}
+```
+
+- `final.steps` は**文が変わった段階だけ**（`asr`→`spaces`/`replace`/`num`/`punct`/`mask`）。
+  後処理で空になった行は `ev:"drop"`（画面にも字幕ログにも出ないため、ここだけに残る）
+- `translate` は翻訳先ごとに1件。`glossed` は英訳辞書で置換後の実入力、`error` は例外、
+  `shown:false` は画面に出なかった訳（空訳・停止直後）
+- `ev:"tq_drop"` は翻訳キューあふれで捨てた確定行。訳の欠落・ずれの原因になる
+- 書き込みは `engine.CaptionEngine._dev_event()` に集約（認識2スレッド＋翻訳ワーカーを
+  ロックで直列化・都度flush・例外は握りつぶし）。テストは `tests/test_dev_log.py`

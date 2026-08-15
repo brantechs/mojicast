@@ -47,6 +47,9 @@ DEFAULT_CONFIG = {
     "translate_lang2": "",   # 第2翻訳先（同上のコード。"" = 追加しない）
     "translate_lang3": "",   # 第3翻訳先（同上のコード。"" = 追加しない）
     "save_log": True, "mask_char": "○", "num_arabic": True,
+    # 開発者モード。認識の後処理と翻訳の入出力を logs\日付\*.jsonl に残す
+    # （不具合調査用・既定OFF。字幕ログ save_log とは独立に効く）
+    "dev_log": False,
     "word_fx": True,        # 単語エフェクトの表示（OFFでも認識誘導・置換は有効）
     "preset": "standard", "box": "none", "port": 8765,
     "word_profile": "",     # 使用中の単語プロファイル（"" = 共通のみ）

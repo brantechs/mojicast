@@ -330,6 +330,10 @@
           <div class="field"><label for="uiLang" data-i18n="st.f_lang">表示言語</label><select id="uiLang"><option value="ja">日本語</option><option value="zh">中文</option><option value="en">English</option></select></div>
           <div class="field"><label for="theme" data-i18n="st.f_theme">画面テーマ</label><select id="theme"><option value="light" data-i18n="st.opt_light">ライト</option><option value="dark" data-i18n="st.opt_dark">ダーク</option></select></div>
         </article>
+        <article class="card"><h2 data-i18n="st.card_dev">開発者向け</h2><p data-i18n="st.card_dev_d">不具合を報告するときだけオンにしてください。</p>
+          <label class="checkrow"><input id="devLog" type="checkbox"><span><b data-i18n="st.chk_devlog">開発者ログを残す</b><small data-i18n="st.chk_devlog_d">認識と翻訳の途中経過を記録します（字幕の見た目は変わりません）</small></span></label>
+          <div class="note" data-i18n="st.note_devlog">字幕ログと同じフォルダに、同じ名前の .jsonl ファイルが増えます。「訳がおかしい」などの報告に添えていただくと、どの文がどう翻訳されたかを時刻で追えます。取り出しは上の「字幕ログの保存フォルダを開く」から。</div>
+        </article>
       </div>
     </section>
 
@@ -502,7 +506,7 @@
     loadVcCmds();   // カスタムコマンド（非同期・失敗しても他の設定表示は継続）
     renderObsList(); $("port").value = cfg.port || 8765;
     $("punctuate").checked = cfg.punctuate !== false; $("saveLog").checked = cfg.save_log !== false; $("theme").value = cfg.theme || "light";
-    $("uiLang").value = cfg.ui_lang || "ja";
+    $("uiLang").value = cfg.ui_lang || "ja"; $("devLog").checked = !!cfg.dev_log;
     if (cfg.version) $("aboutVer").textContent = "Mojicast v" + cfg.version;
     let sec = qs.get("section") || "hearing";
     if (sec === "collab" && cfg.collab_supported === false) sec = "hearing";   // 未対応OSでは直リンクも逃がす
@@ -630,6 +634,8 @@
   }
   $("punctuate").addEventListener("change", e => save({punctuate:e.target.checked},false));
   $("saveLog").addEventListener("change", e => save({save_log:e.target.checked},false));
+  // 開発者ログはセッション開始時に開くので、反映には停止→開始が要る（既定の再起動案内を出す）
+  $("devLog").addEventListener("change", e => save({dev_log:e.target.checked}));
   $("openLogs").addEventListener("click", async () => {
     try {
       const result = await api("/api/logs/open", {});

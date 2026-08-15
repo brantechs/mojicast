@@ -31,6 +31,8 @@
     --line: #dbe2ec; --text: #16202e; --dim: #5c6b80;
     --accent: #0499bd; --accent2: #d4247a; --ok: #12a05f; --warn: #b5761a; --err: #d94141;
   }
+  /* selectのポップアップ一覧はcolor-schemeだけでは追随しない環境があるため明示指定 */
+  select option { background: var(--panel2); color: var(--text); }
   /* 字幕モニタは透過オーバーレイの見た目。ライトでは黒縞→透過を示す市松に */
   :root[data-theme="light"] #monitor {
     background: repeating-conic-gradient(#cfd7e2 0% 25%, #e4e9f1 0% 50%) 0 0/22px 22px;

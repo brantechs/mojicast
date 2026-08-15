@@ -32,6 +32,8 @@
     --text:#16202e; --dim:#5c6b80; --accent:#0499bd; --ok:#12a05f;
     --warn:#b5761a; --err:#d94141;
   }
+  /* selectのポップアップ一覧はcolor-schemeだけでは追随しない環境があるため明示指定 */
+  select option { background: var(--panel2); color: var(--text); }
   * { box-sizing:border-box; }
   html,body { height:100%; }
   body { margin:0; overflow:hidden; background:var(--bg); color:var(--text);

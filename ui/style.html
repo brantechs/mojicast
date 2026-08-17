@@ -109,6 +109,12 @@
   .radios { display: flex; align-items: center; gap: 14px; color: var(--dim); }
   .fr .radios label { display: flex; align-items: center; gap: 5px; margin: 0; cursor: pointer; }
   .radios input { accent-color: var(--accent); width: 15px; height: 15px; }
+  /* 文字揃え（横3・縦3のアイコンボタン。PowerPoint風のセグメント） */
+  .alignRow { display: flex; gap: 8px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { background: var(--panel2); border: none; padding: 5px 8px; cursor: pointer; color: var(--dim); display: flex; align-items: center; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.active { background: var(--panel); color: var(--accent); }
   /* 文字プレビュー */
   #previewBox {
     margin-top: 10px; border-radius: 10px; padding: 26px 20px 18px;
@@ -265,7 +271,19 @@
         <div class="fr advanced-only"><label data-i18n="sy.border_color">枠線色</label><input type="color" id="b_borderColor"></div>
         <div class="fr advanced-only"><label><span data-i18n="sy.border_width">枠線太さ</span> <output id="o_bbw"></output><span data-i18n="sy.zero_none">（0でなし）</span></label><input type="range" id="b_borderWidth" min="0" max="6" step="1"></div>
         <div class="fr only-flow advanced-only"><label data-i18n="sy.text_align">文字揃え</label>
-          <select id="b_align"><option value="left" data-i18n="sy.align_left">左揃え</option><option value="center" data-i18n="sy.align_center">中央</option><option value="right" data-i18n="sy.align_right">右揃え</option></select></div>
+          <div class="alignRow">
+            <div class="seg" id="alignH">
+              <button type="button" data-v="left" title="左揃え" data-i18n-title="sy.align_left"><svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"><path d="M2 4h12M2 8h7M2 12h12"/></svg></button>
+              <button type="button" data-v="center" title="中央" data-i18n-title="sy.align_center"><svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"><path d="M2 4h12M4.5 8h7M2 12h12"/></svg></button>
+              <button type="button" data-v="right" title="右揃え" data-i18n-title="sy.align_right"><svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"><path d="M2 4h12M7 8h7M2 12h12"/></svg></button>
+            </div>
+            <div class="seg" id="alignV">
+              <button type="button" data-v="top" title="上寄せ" data-i18n-title="sy.valign_top"><svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"><path d="M2 3h12M2 7h12"/></svg></button>
+              <button type="button" data-v="middle" title="上下中央" data-i18n-title="sy.valign_middle"><svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"><path d="M2 6h12M2 10h12"/></svg></button>
+              <button type="button" data-v="bottom" title="下寄せ" data-i18n-title="sy.valign_bottom"><svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"><path d="M2 9h12M2 13h12"/></svg></button>
+            </div>
+          </div></div>
+        <div class="fr chk only-flow advanced-only" id="fitRow"><input type="checkbox" id="b_fitOneLine"><span data-i18n="sy.fit_one_line">1行に収める（長い文は縮小）</span></div>
         <div class="fr only-flow advanced-only"><label><span data-i18n="sy.max_lines">保持する行数</span> <output id="o_bml"></output></label><input type="range" id="b_maxLines" min="2" max="40" step="1"></div>
         <div class="fr only-flow advanced-only"><label data-i18n="sy.clear_mode">前の字幕の扱い</label>
           <div class="radios">
@@ -637,11 +655,26 @@
   }
 
   function updateModeRows() {
-    const lyric = $("b_mode").value === "lyric";
+    const mode = $("b_mode").value;
+    const lyric = mode === "lyric";
     for (const el of document.querySelectorAll(".only-flow"))
       el.style.display = lyric ? "none" : "";
     for (const el of document.querySelectorAll(".only-lyric"))
       el.style.display = lyric ? "" : "none";
+    // 縦の寄せと1行フィットは通常（積み上げ）専用。縦書き・リリックでは隠す
+    const flowOnly = mode === "flow" || !mode;
+    $("alignV").style.display = flowOnly ? "" : "none";
+    $("fitRow").style.display = (flowOnly && !lyric) ? "" : "none";
+  }
+
+  // アイコンのセグメントボタン（文字揃え）の読み書き
+  function setSeg(id, v) {
+    for (const b of $(id).querySelectorAll("button"))
+      b.classList.toggle("active", b.dataset.v === v);
+  }
+  function getSeg(id, fallback) {
+    const b = $(id).querySelector("button.active");
+    return b ? b.dataset.v : fallback;
   }
 
   // 「前の字幕の扱い」ラジオ（keep / speech）の読み書き
@@ -668,7 +701,9 @@
     setR("b_padding", "o_bpad", b.padding ?? 16, v => v + "px");
     $("b_borderColor").value = b.borderColor || "#00e5ff";
     setR("b_borderWidth", "o_bbw", b.borderWidth ?? 0, v => v + "px");
-    $("b_align").value = b.align || "left";
+    setSeg("alignH", b.align || "left");
+    setSeg("alignV", b.valign || "bottom");
+    $("b_fitOneLine").checked = !!b.fitOneLine;
     setR("b_maxLines", "o_bml", b.maxLines ?? 20, v => v + "行");
     setClearMode(b.clearOnSpeech ? "speech" : "keep");
     $("b_smooth").checked = b.smooth !== false;
@@ -723,7 +758,9 @@
     b.padding = +$("b_padding").value;
     b.borderColor = $("b_borderColor").value;
     b.borderWidth = +$("b_borderWidth").value;
-    b.align = $("b_align").value;
+    b.align = getSeg("alignH", "left");
+    b.valign = getSeg("alignV", "bottom");
+    b.fitOneLine = $("b_fitOneLine").checked;
     b.maxLines = +$("b_maxLines").value;
     b.clearOnSpeech = getClearMode() === "speech";
     b.smooth = $("b_smooth").checked;
@@ -795,6 +832,9 @@
       FX.applyLineStyle(d, p, p.size);   // 実寸（縮小はstageInnerのscaleが担う）
       FX.renderWords(d, STAGE_LINES[stageN++ % STAGE_LINES.length], table, p);
       sc.appendChild(d);
+      // ステージは実寸1920×1080の座標系なので、本番と同じ幅・サイズで縮められる
+      if (b.fitOneLine && (b.mode || "flow") === "flow")
+        FX.fitOneLine(d, sc.clientWidth, p.size);
       while (sc.children.length > (b.maxLines || 30)) sc.removeChild(sc.firstChild);
     });
     armStageClear(b);
@@ -920,6 +960,18 @@
         clearTimeout(bt);
         bt = setTimeout(stageApply, 120);
       });
+    }
+    // 文字揃えのアイコンボタン（input ではないので個別にバインド）
+    for (const seg of ["alignH", "alignV"]) {
+      for (const b of $(seg).querySelectorAll("button")) {
+        b.addEventListener("click", () => {
+          setSeg(seg, b.dataset.v);
+          collectBox();
+          renderBoxList();
+          clearTimeout(bt);
+          bt = setTimeout(stageApply, 120);
+        });
+      }
     }
   }
 

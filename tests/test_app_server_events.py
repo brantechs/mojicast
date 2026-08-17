@@ -30,5 +30,31 @@ class TranslationSlotTests(unittest.TestCase):
         self.assertEqual(app_server.translation_slot({}, "en"), 0)
 
 
+class ResolveStyleTrLangsTests(unittest.TestCase):
+    """style/init に載せる trLangs（有効な翻訳先の言語コード）。
+
+    overlay が確定行と同時に訳文プレースホルダーを確保するために使う。
+    word_fx=False にして wordstore（辞書ファイル）を触らせない。
+    """
+
+    def tr_langs(self, **cfg):
+        cfg.setdefault("word_fx", False)
+        return app_server.resolve_style(cfg)["trLangs"]
+
+    def test_translate_off_is_empty(self):
+        self.assertEqual(self.tr_langs(translate=False, translate_lang="en"), [])
+
+    def test_setting_order_without_duplicates(self):
+        # 空の翻訳先は飛ばし、同じ言語が重なっても1つだけ・設定順で返す
+        self.assertEqual(
+            self.tr_langs(translate=True, translate_lang="en",
+                          translate_lang2="", translate_lang3="en"),
+            ["en"])
+        self.assertEqual(
+            self.tr_langs(translate=True, translate_lang="zh",
+                          translate_lang2="en", translate_lang3="zh"),
+            ["zh", "en"])
+
+
 if __name__ == "__main__":
     unittest.main()

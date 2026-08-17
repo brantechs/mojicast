@@ -457,8 +457,17 @@ def resolve_style(cfg):
         hot_surfaces = [s for s, _r, _sc in wordstore.merged_hotwords(profile)]
     else:
         effects, hot_surfaces = [], []
+    # 有効な翻訳先の言語コード（設定順・重複除去）。overlay が確定行と同時に
+    # 訳文プレースホルダー行を確保するために使う（後から届く訳文でレイアウトが
+    # 押し上がらない）。翻訳OFFなら空リスト。
+    tr_langs = []
+    if cfg.get("translate", False):
+        for tgt in (cfg.get("translate_lang"), cfg.get("translate_lang2"),
+                    cfg.get("translate_lang3")):
+            if tgt and tgt not in tr_langs:
+                tr_langs.append(tgt)
     out = {"style": style, "box": box, "effects": effects,
-           "hotwords": hot_surfaces}
+           "hotwords": hot_surfaces, "trLangs": tr_langs}
     if cfg.get("collab"):
         self_name = (cfg.get("self_name") or "自分").strip() or "自分"
         guest_name = (cfg.get("guest_name") or "ゲスト").strip() or "ゲスト"

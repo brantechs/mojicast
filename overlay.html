@@ -44,12 +44,16 @@
   const DEFAULT_BOX = {   // 既定はフリー（従来と同じ見た目）
     x: 0, y: 0, w: 100, h: 100, bg: "", bgOpacity: 0, radius: 0,
     padding: 28, borderColor: "", borderWidth: 0, align: "left",
+    valign: "bottom", fitOneLine: false,
     maxLines: 4, smooth: true, smoothMs: 250
   };
 
   let effects = [];        // エフェクト・ハイライト単語は話者間で共有
   let hotwords = [];
   let speakerNames = [];   // コラボ中の話者名（空=ソロ）
+  // 有効な翻訳先の言語コード（設定順）。確定行と同時に訳文の場所を先に確保して、
+  // 数秒後に訳文が届いてもレイアウトが押し上がらないようにするために使う
+  let trLangs = [];
 
   // 翻訳専用ビューは訳文を主行として流すので、リリック演出は使わず flow として扱う
   const isLyric = (box) => !trSlot && (box.mode || "flow") === "lyric";
@@ -106,9 +110,11 @@
     p._mode = mode;
     // URLクエリは最優先で上書き
     const size = qp.get("size") || p.style.size;
+    p.effSize = +size;   // 実効フォントサイズ（1行フィットの基準px）
     p.style.hotColor = qp.get("hot") || p.style.hotColor;
     if (qp.get("max")) p.box.maxLines = parseInt(qp.get("max"), 10);
 
+    p.partialEl.style.whiteSpace = "";   // 1行フィットを解除したときの掃除
     for (const el of [p.finalsEl, p.partialEl])
       FX.applyLineStyle(el, p.style, size);
     // 表示済みの英訳行にも新スタイルを即反映
@@ -127,6 +133,7 @@
   function updatePanes(msg) {
     if (msg.effects) effects = msg.effects;
     if (msg.hotwords) hotwords = msg.hotwords;
+    if (msg.trLangs) trLangs = msg.trLangs;   // init/style の両方に載って来る
 
     const def = panes.get("");
     if (msg.style) def.style = Object.assign({}, DEFAULT_STYLE, msg.style);
@@ -196,6 +203,9 @@
     FX.smoothAppend(p.scroller, p.box, () => {
       p.partialEl.textContent = "";
       p.finalsEl.appendChild(div);
+      // 縮小してから伸びた高さを測らせる（順序が逆だとスクロール量がずれる）
+      if (p.box.fitOneLine && (p.box.mode || "flow") === "flow")
+        FX.fitOneLine(div, p.scroller.clientWidth, p.effSize || p.style.size);
       trimLines(p);
     });
     FX.burstLine(div);          // パーティクル発射（登録単語があれば）
@@ -226,6 +236,19 @@
     div.className = "line";
     if (id != null) div.dataset.fid = id;   // 英訳を後から結び付けるための目印
     FX.renderWords(div, text, p.table, p.style);
+    // 訳文は数秒遅れて届く。あとから行を足すと 1発話につき翻訳先の数だけ
+    // レイアウトが押し上がるので、確定と同時に空の .en を置いて場所を確保する。
+    // （届いた訳文は addTranslation がこの空行を埋めるだけになる）
+    if (part !== "asr" && trLangs.length && id != null) {
+      for (const lang of trLangs) {
+        const el = document.createElement("div");
+        el.className = "en";
+        el.dataset.lang = lang;
+        el.style.minHeight = "1.25em";   // 1行ぶんの場所を予約（.en の line-height と同値）
+        styleEn(el, p.style);
+        div.appendChild(el);
+      }
+    }
     pushLine(p, div);
     p.awaitNext = true;   // 次の発話が始まったらこの行を消す（clearOnSpeech時）
   }
@@ -240,6 +263,8 @@
       FX.renderWords(p.partialEl, text || "", p.table, p.style);
     else
       p.partialEl.textContent = text || "";
+    if (p.box.fitOneLine && (p.box.mode || "flow") === "flow")
+      FX.fitOneLine(p.partialEl, p.scroller.clientWidth, p.effSize || p.style.size);
     if (text) armClear(p);   // 話している間は一括消去を待たせる
     trimLines(p, true);      // 薄文字も1行ぶん占めるので確定行を1本ぶん譲る
     // パーシャルが伸びて上の行が見切れたら掃除
@@ -300,8 +325,11 @@
         el.dataset.lang = lang;
         line.appendChild(el);
       }
-      styleEn(el, p.style);
+      styleEn(el, p.style);       // fontSize は em。fit はこの後で px 上書きする
       el.textContent = text;
+      if (p.box.fitOneLine && (p.box.mode || "flow") === "flow")
+        FX.fitOneLine(el, line.clientWidth,
+                      (p.effSize || p.style.size) * (p.style.enScale ?? 0.6));
       armClear(p);
       return;
     }

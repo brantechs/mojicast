@@ -451,11 +451,13 @@
       clipEl.style.borderRadius = (box.radius ?? 0) + "px";
       clipEl.style.overflow = mode === "lyric" ? "visible" : "hidden";
       // 出口エッジのフェード（flow=上端 / vertical=右端）
+      // flow の出口は下アンカー（valign=bottom）のときだけ上端。上寄せ・上下中央は
+      // 行が下へ伸びるので出口が定まらず、マスクを敷くと文字が薄れて読めなくなる。
       const fade = box.fadePx ?? 36;
       let mask = "";
       if (mode === "vertical")
         mask = `linear-gradient(to left, transparent 0, #000 ${fade}px)`;
-      else if (mode !== "lyric")
+      else if (mode !== "lyric" && (box.valign || "bottom") === "bottom")
         mask = `linear-gradient(to bottom, transparent 0, #000 ${fade}px)`;
       clipEl.style.webkitMaskImage = mask;
       clipEl.style.maskImage = mask;
@@ -471,12 +473,26 @@
       scrollEl.style.top = pad;
       scrollEl.style.bottom = pad;
       scrollEl.style.right = "auto";
+      scrollEl.style.transform = "";   // flow(上下中央)から切り替えた残りを掃除
     } else {
+      // flow: box.valign で縦の寄せを決める（既定=下アンカー＝従来どおり）
+      const valign = box.valign || "bottom";
       scrollEl.style.writingMode = "";
       scrollEl.style.left = pad;
       scrollEl.style.right = pad;
-      scrollEl.style.bottom = pad;
-      scrollEl.style.top = "auto";
+      if (valign === "top") {
+        scrollEl.style.top = pad;
+        scrollEl.style.bottom = "auto";
+        scrollEl.style.transform = "";
+      } else if (valign === "middle") {
+        scrollEl.style.top = "50%";
+        scrollEl.style.bottom = "auto";
+        scrollEl.style.transform = "translateY(-50%)";
+      } else {
+        scrollEl.style.bottom = pad;
+        scrollEl.style.top = "auto";
+        scrollEl.style.transform = "";   // 前モードのインラインtransformを掃除
+      }
     }
     scrollEl.style.textAlign = box.align || "left";
   };
@@ -487,7 +503,11 @@
    * スクロールアニメ完了後（smoothMs+α）に呼ぶこと。最新行は消さない。
    */
   FX.pruneClipped = function (clipEl, linesEl, box) {
-    if ((box.mode || "flow") === "lyric") return;
+    const mode = box.mode || "flow";
+    if (mode === "lyric") return;
+    // 上寄せ・上下中央は「上端から出ていく」前提が崩れる（行は下へ伸びる）ので
+    // クリップ判定は行わない。行数トリム（maxLines）に任せる。
+    if (mode !== "vertical" && (box.valign || "bottom") !== "bottom") return;
     const r = clipEl.getBoundingClientRect();
     const vert = box.mode === "vertical";
     const kids = [...linesEl.children];
@@ -535,22 +555,51 @@
    * スムーズスクロール（FLIP方式・transformのみ＝GPU合成で軽量）
    * addFn() の中で行を追加すると、伸びた分だけ一瞬元の位置に戻してから
    * アニメで滑らかに流す。flow=上へ / vertical=右へ。box.smooth=false なら即時。
+   * flow の縦寄せ（box.valign）で「行が伸びる向き」が変わるので補正量も変える:
+   *   bottom = 下アンカー（既存行が上へ動く）→ 伸びた分だけ戻す
+   *   top    = 上アンカー（既存行は動かない）→ 補正不要
+   *   middle = 上下中央（既存行は半分だけ上へ動く）→ 半分だけ戻す
    */
   FX.smoothAppend = function (scrollEl, box, addFn) {
     const vert = box && box.mode === "vertical";
+    const flow = !vert && (!box || (box.mode || "flow") !== "lyric");
+    const valign = (box && box.valign) || "bottom";
+    // 上寄せは既存行が1pxも動かないのでFLIPそのものが不要
+    if (flow && valign === "top") { addFn(); return; }
     const before = vert ? scrollEl.offsetWidth : scrollEl.offsetHeight;
     addFn();
     if (!box || !box.smooth) return;
     const delta = (vert ? scrollEl.offsetWidth : scrollEl.offsetHeight) - before;
     if (delta <= 0) return;
+    // 上下中央は基準transformが translateY(-50%)。そこからのズレでアニメする
+    const mid = flow && valign === "middle";
+    const from = vert ? `translateX(${-delta}px)`
+      : mid ? `translateY(calc(-50% + ${delta / 2}px))`
+            : `translateY(${delta}px)`;
+    const to = mid ? "translateY(-50%)" : "translate(0,0)";
     scrollEl.style.transition = "none";
-    scrollEl.style.transform =
-      vert ? `translateX(${-delta}px)` : `translateY(${delta}px)`;
+    scrollEl.style.transform = from;
     requestAnimationFrame(() => {
       scrollEl.style.transition =
         `transform ${box.smoothMs || 250}ms cubic-bezier(.25,.6,.3,1)`;
-      scrollEl.style.transform = "translate(0,0)";
+      scrollEl.style.transform = to;
     });
+  };
+
+  /**
+   * 1行に収める: 折り返しを禁止し、幅からはみ出す分はフォントを縮小する。
+   * scrollWidth の実測が要るので、el は DOM に接続済みの状態で呼ぶこと。
+   *   availPx: 収めたい幅（スクローラの clientWidth 等）
+   *   basePx:  縮める前のフォントサイズ（px）
+   *   minRatio: 縮小の下限（basePx比・既定 0.3）
+   */
+  FX.fitOneLine = function (el, availPx, basePx, minRatio) {
+    el.style.whiteSpace = "nowrap";
+    el.style.fontSize = basePx + "px";
+    const w = el.scrollWidth;
+    if (w > availPx && availPx > 0)
+      el.style.fontSize = Math.max((minRatio ?? 0.3) * basePx,
+                                   basePx * availPx / w) + "px";
   };
 
   // ---------------- リリックビデオ風字幕 ----------------

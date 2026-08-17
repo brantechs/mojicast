@@ -209,7 +209,7 @@
 
     if (isLyric(p.box)) {   // フレーズを画面に散らすタイポグラフィ演出
       p.partialEl.textContent = "";
-      FX.lyricSpawn(p.boxEl, text, { style: p.style, table: p.table, box: p.box });
+      FX.lyricSpawn(p.boxEl, text, { style: p.style, table: p.table, box: p.box, fid: id });
       return;
     }
 
@@ -257,6 +257,7 @@
   }
 
   // 確定行(fid)の下に訳文を差し込む。既に見切れて消えた行なら無視。
+  // リリックビデオ風字幕は .line を作らないので、同じ fid のシーン下部へ併記する。
   // fid は話者をまたいで一意なので全ペインから探す。
   // 翻訳先が複数（最大3言語）のときは言語(lang)ごとに1行ずつ積む（同一fidへ
   // 翻訳先の数だけ届く。エンジンは第1→第2→第3翻訳先の順で通知するため、
@@ -276,6 +277,10 @@
     }
     lang = lang || "";
     for (const p of panes.values()) {
+      if (isLyric(p.box)) {   // リリックはシーン下部に併記（消えたシーンは無視）
+        if (FX.lyricTranslate(p.boxEl, id, lang, text, p.style, (el) => styleEn(el, p.style))) return;
+        continue;
+      }
       const line = p.finalsEl.querySelector('.line[data-fid="' + id + '"]');
       if (!line) continue;
       let el = [...line.querySelectorAll(".en")]

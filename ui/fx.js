@@ -156,6 +156,9 @@
     position:absolute; margin:0; line-height:1.08; white-space:nowrap;
     will-change:transform,opacity,filter,clip-path;
   }
+  .lyr-tr { position:absolute; left:50%; bottom:4%; transform:translateX(-50%);
+    max-width:94%; text-align:center; line-height:1.3; white-space:normal;
+    word-break:break-word; will-change:transform,opacity; }
   .lyr-char,.lyr-word { display:inline-block; white-space:pre; will-change:transform,opacity,filter; }
   .lyr-vertical { writing-mode:vertical-rl; text-orientation:upright; }
   .lyr-outline { color:transparent !important; -webkit-text-stroke:.035em var(--lyr-color,#fff); text-shadow:none !important; }
@@ -932,6 +935,8 @@
     const state = container._lyr ?? (container._lyr = { scenes: [], lastPattern: "", strongCooldown: 0 });
     const pattern = lyricChoose(text, opts.box || {}, state);
     const scene = lyricScene(container, opts.style, pattern);
+    if (opts.fid != null) scene.dataset.fid = String(opts.fid);   // 訳文を後から結び付ける目印
+    scene._lyrBase = lyricBaseSize(opts);   // 訳文のサイズ基準（enScale の em はこれに乗る）
     lyricBuilders[pattern.id](scene, text, opts);
     state.scenes.push(scene);
     const maxScenes = Math.max(1, Math.min(3, opts.box.lyricMaxScenes ?? 2));
@@ -944,6 +949,40 @@
     }, life);
     FX.burstLine(scene.querySelector(".lyr-unit") || scene);
     return pattern.id;
+  };
+
+  // リリックシーン(fid)の下部に訳文を併記する。decorate(el) が EN スタイルを適用する。
+  // シーンが既に消えていれば false（flow の「見切れた行は無視」と同じ扱い）。
+  FX.lyricTranslate = function (container, fid, lang, text, style, decorate) {
+    const state = container._lyr;
+    if (!state || fid == null) return false;
+    const scene = state.scenes.find(s => s.dataset.fid === String(fid));
+    if (!scene) return false;
+    let wrap = scene.querySelector(".lyr-tr");
+    if (!wrap) {
+      wrap = document.createElement("div");
+      wrap.className = "lyr-tr";
+      // flow では .en が親 .line の縁取り・フォントを継承する。シーン直下には
+      // 継承元が無いので、wrap に本文スタイルを敷いて同じ継承関係を作る。
+      // フォントサイズはリリックの文字サイズ基準（styleEn の enScale(em) が乗る）。
+      FX.applyLineStyle(wrap, style, Math.max(14, Math.round(scene._lyrBase || 40)));
+      wrap.style.fontWeight = 600;   // flow の .line .en と同じ太さ
+      scene.appendChild(wrap);
+      lyricAnimate(wrap, [
+        { opacity: 0, transform: "translate(-50%, 10px)" },
+        { opacity: 1, transform: "translate(-50%, 0)" },
+      ], { duration: 420, delay: 120, easing: "ease-out", fill: "both" });
+    }
+    lang = lang || "";
+    let el = [...wrap.children].find(e => (e.dataset.lang || "") === lang);
+    if (!el) {
+      el = document.createElement("div");
+      el.dataset.lang = lang;
+      wrap.appendChild(el);
+    }
+    if (decorate) decorate(el);
+    el.textContent = text;
+    return true;
   };
 
   FX.lyricClear = function (container) {

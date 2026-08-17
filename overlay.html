@@ -95,6 +95,15 @@
   function applyPane(p) {
     clearTimeout(p.clearTimer);   // 新しい設定は次のアクティビティから効かせる
     p.awaitNext = false;
+    // 表示のしかた（flow/vert⇄lyric等）を切り替えたら前モードの表示物を一掃する。
+    // リリックは armClear が効かないため、切替前の確定行が永久に残ってしまう。
+    const mode = p.box.mode || "flow";
+    if (p._mode !== undefined && p._mode !== mode) {
+      p.finalsEl.textContent = "";
+      p.partialEl.textContent = "";
+      FX.lyricClear(p.boxEl);
+    }
+    p._mode = mode;
     // URLクエリは最優先で上書き
     const size = qp.get("size") || p.style.size;
     p.style.hotColor = qp.get("hot") || p.style.hotColor;

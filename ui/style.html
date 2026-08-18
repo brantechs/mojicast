@@ -24,16 +24,20 @@
   /* 埋め込み時: このページ自身の上位タブ(nav)は非表示（親studioが切替を担う） */
   :root.embed nav { display: none; }
   :root {
+    color-scheme: dark;
     --bg: #0d1117; --panel: #161c26; --panel2: #1c2432;
     --line: #2a3547; --text: #dce6f5; --dim: #7d8ba1;
     --accent: #00e5ff; --ok: #3dffa0; --err: #ff5c5c;
   }
   /* ライトテーマ（GUI窓のみ）。既定はダーク。 */
   :root[data-theme="light"] {
+    color-scheme: light;
     --bg: #f7f9fc; --panel: #ffffff; --panel2: #eef2f8;
     --line: #dbe2ec; --text: #16202e; --dim: #5c6b80;
     --accent: #0499bd; --ok: #12a05f; --err: #d94141;
   }
+  /* selectのポップアップ一覧はcolor-schemeだけでは追随しない環境があるため明示指定 */
+  select option { background: var(--panel2); color: var(--text); }
   :root[data-theme="light"] .fsec.en { color: #d4247a; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -93,7 +97,7 @@
   .fsec.en { color: #ff7ac2; }
   .fr label { display: flex; justify-content: space-between; color: var(--dim); margin-bottom: 3px; }
   .fr label output { color: var(--accent); font-weight: 700; }
-  input[type=text], select {
+  input[type=text], input[type=number], select {
     width: 100%; background: var(--panel2); color: var(--text);
     border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-family: inherit; font-size: 13px;
   }
@@ -101,6 +105,16 @@
   input[type=color] { width: 100%; height: 32px; padding: 2px; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
   .chk { display: flex; align-items: center; gap: 8px; color: var(--dim); padding-top: 18px; }
   .chk input { accent-color: var(--accent); width: 15px; height: 15px; }
+  /* 2択のラジオ行（.fr の中身。チェック行と同じ配色） */
+  .radios { display: flex; align-items: center; gap: 14px; color: var(--dim); }
+  .fr .radios label { display: flex; align-items: center; gap: 5px; margin: 0; cursor: pointer; }
+  .radios input { accent-color: var(--accent); width: 15px; height: 15px; }
+  /* 文字揃え（横3・縦3のアイコンボタン。PowerPoint風のセグメント） */
+  .alignRow { display: flex; gap: 8px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { background: var(--panel2); border: none; padding: 5px 8px; cursor: pointer; color: var(--dim); display: flex; align-items: center; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button.active { background: var(--panel); color: var(--accent); }
   /* 文字プレビュー */
   #previewBox {
     margin-top: 10px; border-radius: 10px; padding: 26px 20px 18px;
@@ -257,12 +271,28 @@
         <div class="fr advanced-only"><label data-i18n="sy.border_color">枠線色</label><input type="color" id="b_borderColor"></div>
         <div class="fr advanced-only"><label><span data-i18n="sy.border_width">枠線太さ</span> <output id="o_bbw"></output><span data-i18n="sy.zero_none">（0でなし）</span></label><input type="range" id="b_borderWidth" min="0" max="6" step="1"></div>
         <div class="fr only-flow advanced-only"><label data-i18n="sy.text_align">文字揃え</label>
-          <select id="b_align"><option value="left" data-i18n="sy.align_left">左揃え</option><option value="center" data-i18n="sy.align_center">中央</option><option value="right" data-i18n="sy.align_right">右揃え</option></select></div>
+          <div class="alignRow">
+            <div class="seg" id="alignH">
+              <button type="button" data-v="left" title="左揃え" data-i18n-title="sy.align_left"><svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"><path d="M2 4h12M2 8h7M2 12h12"/></svg></button>
+              <button type="button" data-v="center" title="中央" data-i18n-title="sy.align_center"><svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"><path d="M2 4h12M4.5 8h7M2 12h12"/></svg></button>
+              <button type="button" data-v="right" title="右揃え" data-i18n-title="sy.align_right"><svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"><path d="M2 4h12M7 8h7M2 12h12"/></svg></button>
+            </div>
+            <div class="seg" id="alignV">
+              <button type="button" data-v="top" title="上寄せ" data-i18n-title="sy.valign_top"><svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"><path d="M2 3h12M2 7h12"/></svg></button>
+              <button type="button" data-v="middle" title="上下中央" data-i18n-title="sy.valign_middle"><svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"><path d="M2 6h12M2 10h12"/></svg></button>
+              <button type="button" data-v="bottom" title="下寄せ" data-i18n-title="sy.valign_bottom"><svg viewBox="0 0 16 16" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"><path d="M2 9h12M2 13h12"/></svg></button>
+            </div>
+          </div></div>
+        <div class="fr chk only-flow advanced-only" id="fitRow"><input type="checkbox" id="b_fitOneLine"><span data-i18n="sy.fit_one_line">1行に収める（長い文は縮小）</span></div>
         <div class="fr only-flow advanced-only"><label><span data-i18n="sy.max_lines">保持する行数</span> <output id="o_bml"></output></label><input type="range" id="b_maxLines" min="2" max="40" step="1"></div>
+        <div class="fr only-flow advanced-only"><label data-i18n="sy.clear_mode">前の字幕の扱い</label>
+          <div class="radios">
+            <label><input type="radio" name="b_clearMode" value="keep"><span data-i18n="sy.clear_mode_keep">残す</span></label>
+            <label><input type="radio" name="b_clearMode" value="speech"><span data-i18n="sy.clear_mode_speech">話している間に消える</span></label>
+          </div></div>
         <div class="fr chk only-flow advanced-only"><input type="checkbox" id="b_smooth"><span data-i18n="sy.smooth_scroll">スムーズスクロール</span></div>
         <div class="fr only-flow advanced-only"><label><span data-i18n="sy.scroll_speed">スクロール速度</span> <output id="o_bsm"></output></label><input type="range" id="b_smoothMs" min="100" max="600" step="50"></div>
-        <div class="fr chk only-flow advanced-only"><input type="checkbox" id="b_autoClear"><span data-i18n="sy.auto_clear">一定時間で字幕を消す</span></div>
-        <div class="fr only-flow advanced-only" id="r_clearSec"><label><span data-i18n="sy.clear_after">消えるまでの時間</span> <output id="o_bclear"></output></label><input type="range" id="b_clearSec" min="2" max="30" step="1"></div>
+        <div class="fr only-flow advanced-only"><label><span data-i18n="sy.clear_all">無音のあと字幕をまとめて消す</span><span data-i18n="sy.clear_all_hint">（-1 = 消さない）</span></label><input type="number" id="b_clearAllSec" min="-1" max="600" step="1"></div>
         <div class="fr only-lyric advanced-only"><label data-i18n="sy.lyric_mood">演出の雰囲気</label>
           <select id="b_lyricMood">
             <option value="auto" data-i18n="sy.mood_auto">おまかせ</option>
@@ -625,14 +655,34 @@
   }
 
   function updateModeRows() {
-    const lyric = $("b_mode").value === "lyric";
+    const mode = $("b_mode").value;
+    const lyric = mode === "lyric";
     for (const el of document.querySelectorAll(".only-flow"))
       el.style.display = lyric ? "none" : "";
     for (const el of document.querySelectorAll(".only-lyric"))
       el.style.display = lyric ? "" : "none";
-    // 自動消去の秒数はチェックONのときだけ出す
-    if (!lyric && !$("b_autoClear").checked)
-      $("r_clearSec").style.display = "none";
+    // 縦の寄せと1行フィットは通常（積み上げ）専用。縦書き・リリックでは隠す
+    const flowOnly = mode === "flow" || !mode;
+    $("alignV").style.display = flowOnly ? "" : "none";
+    $("fitRow").style.display = (flowOnly && !lyric) ? "" : "none";
+  }
+
+  // アイコンのセグメントボタン（文字揃え）の読み書き
+  function setSeg(id, v) {
+    for (const b of $(id).querySelectorAll("button"))
+      b.classList.toggle("active", b.dataset.v === v);
+  }
+  function getSeg(id, fallback) {
+    const b = $(id).querySelector("button.active");
+    return b ? b.dataset.v : fallback;
+  }
+
+  // 「前の字幕の扱い」ラジオ（keep / speech）の読み書き
+  function clearModes() { return document.querySelectorAll('input[name="b_clearMode"]'); }
+  function setClearMode(v) { for (const r of clearModes()) r.checked = (r.value === v); }
+  function getClearMode() {
+    for (const r of clearModes()) if (r.checked) return r.value;
+    return "keep";
   }
 
   function loadBoxForm() {
@@ -651,12 +701,14 @@
     setR("b_padding", "o_bpad", b.padding ?? 16, v => v + "px");
     $("b_borderColor").value = b.borderColor || "#00e5ff";
     setR("b_borderWidth", "o_bbw", b.borderWidth ?? 0, v => v + "px");
-    $("b_align").value = b.align || "left";
+    setSeg("alignH", b.align || "left");
+    setSeg("alignV", b.valign || "bottom");
+    $("b_fitOneLine").checked = !!b.fitOneLine;
     setR("b_maxLines", "o_bml", b.maxLines ?? 20, v => v + "行");
+    setClearMode(b.clearOnSpeech ? "speech" : "keep");
     $("b_smooth").checked = b.smooth !== false;
     setR("b_smoothMs", "o_bsm", b.smoothMs ?? 250, v => v + "ms");
-    $("b_autoClear").checked = !!b.autoClear;
-    setR("b_clearSec", "o_bclear", b.clearSec ?? 5, v => v + "秒");
+    $("b_clearAllSec").value = FX.clearAllSec(b);   // 旧キー(autoClear/clearSec)も読み替え
     $("b_lyricMood").value = b.lyricMood || "auto";
     setR("b_lyricScale", "o_bscale", b.lyricScale ?? 1, v => "×" + v);
     setR("b_lifeSec", "o_blife", b.lifeSec ?? 6, v => v + "秒");
@@ -706,12 +758,15 @@
     b.padding = +$("b_padding").value;
     b.borderColor = $("b_borderColor").value;
     b.borderWidth = +$("b_borderWidth").value;
-    b.align = $("b_align").value;
+    b.align = getSeg("alignH", "left");
+    b.valign = getSeg("alignV", "bottom");
+    b.fitOneLine = $("b_fitOneLine").checked;
     b.maxLines = +$("b_maxLines").value;
+    b.clearOnSpeech = getClearMode() === "speech";
     b.smooth = $("b_smooth").checked;
     b.smoothMs = +$("b_smoothMs").value;
-    b.autoClear = $("b_autoClear").checked;
-    b.clearSec = +$("b_clearSec").value;
+    b.clearAllSec = +$("b_clearAllSec").value || -1;
+    delete b.autoClear; delete b.clearSec;   // 旧キーは持ち越さない
     b.mode = $("b_mode").value;
     b.lyricMood = $("b_lyricMood").value;
     b.lyricScale = +$("b_lyricScale").value;
@@ -769,19 +824,33 @@
       return;
     }
     const sc = $("stageScroll");
+    // 「話している間に消える」の近似プレビュー（次の発話＝次の行の直前に前を消す）
+    if (b.clearOnSpeech) FX.fadeOutAll(sc);
     FX.smoothAppend(sc, b, () => {
       const d = document.createElement("div");
       d.className = "line";
       FX.applyLineStyle(d, p, p.size);   // 実寸（縮小はstageInnerのscaleが担う）
       FX.renderWords(d, STAGE_LINES[stageN++ % STAGE_LINES.length], table, p);
       sc.appendChild(d);
-      FX.scheduleAutoClear(d, b);
+      // ステージは実寸1920×1080の座標系なので、本番と同じ幅・サイズで縮められる
+      if (b.fitOneLine && (b.mode || "flow") === "flow")
+        FX.fitOneLine(d, sc.clientWidth, p.size);
       while (sc.children.length > (b.maxLines || 30)) sc.removeChild(sc.firstChild);
     });
+    armStageClear(b);
     setTimeout(() => FX.pruneClipped($("stageClip"), sc, b),
                (b.smoothMs || 250) + 80);
   }
+  // 無音一括消去のプレビュー（設定した秒数だけ行が増えなければステージを一掃）
+  let stageClearTimer = 0;
+  function armStageClear(b) {
+    clearTimeout(stageClearTimer);
+    const sec = FX.clearAllSec(b);
+    if (sec <= 0 || (b.mode || "flow") === "lyric") return;
+    stageClearTimer = setTimeout(() => FX.fadeOutAll($("stageScroll")), sec * 1000);
+  }
   function stageClear() {
+    clearTimeout(stageClearTimer);
     $("stageScroll").innerHTML = "";
     FX.lyricClear($("stageBox"));
     stageN = 0;
@@ -876,7 +945,6 @@
       b_bgOpacity: ["o_bop", v => v], b_radius: ["o_brad", v => v + "px"],
       b_padding: ["o_bpad", v => v + "px"], b_borderWidth: ["o_bbw", v => v + "px"],
       b_maxLines: ["o_bml", v => v + "行"], b_smoothMs: ["o_bsm", v => v + "ms"],
-      b_clearSec: ["o_bclear", v => v + "秒"],
       b_lyricScale: ["o_bscale", v => "×" + v],
       b_lifeSec: ["o_blife", v => v + "秒"], b_lyricMaxScenes: ["o_bmc", v => v + "文"],
     };
@@ -887,10 +955,23 @@
         $("editBoxName").textContent = boxes[curBox].name;
         renderBoxList();
         if (el.id === "b_mode") { updateModeRows(); stageClear(); stageAdd(); }
-        else if (el.id === "b_autoClear") updateModeRows();
+        // 前の字幕の扱いは行の増え方が変わるので、ステージを積み直して見せる
+        if (el.name === "b_clearMode") { stageClear(); stageAdd(); stageAdd(); }
         clearTimeout(bt);
         bt = setTimeout(stageApply, 120);
       });
+    }
+    // 文字揃えのアイコンボタン（input ではないので個別にバインド）
+    for (const seg of ["alignH", "alignV"]) {
+      for (const b of $(seg).querySelectorAll("button")) {
+        b.addEventListener("click", () => {
+          setSeg(seg, b.dataset.v);
+          collectBox();
+          renderBoxList();
+          clearTimeout(bt);
+          bt = setTimeout(stageApply, 120);
+        });
+      }
     }
   }
 

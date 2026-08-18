@@ -18,17 +18,22 @@
 </script>
 <script src="/ui/i18n.js" defer></script>
 <script src="/ui/theme-sync.js" defer></script>
+<script src="/ui/obsurl.js" defer></script>
 <style>
   :root {
+    color-scheme: dark;
     --bg:#0d1117; --panel:#161c26; --panel2:#1c2432; --line:#2a3547;
     --text:#dce6f5; --dim:#7d8ba1; --accent:#00e5ff; --ok:#3dffa0;
     --warn:#ffb84d; --err:#ff5c5c;
   }
   :root[data-theme="light"] {
+    color-scheme: light;
     --bg:#f7f9fc; --panel:#fff; --panel2:#eef2f8; --line:#dbe2ec;
     --text:#16202e; --dim:#5c6b80; --accent:#0499bd; --ok:#12a05f;
     --warn:#b5761a; --err:#d94141;
   }
+  /* selectのポップアップ一覧はcolor-schemeだけでは追随しない環境があるため明示指定 */
+  select option { background: var(--panel2); color: var(--text); }
   * { box-sizing:border-box; }
   html,body { height:100%; }
   body { margin:0; overflow:hidden; background:var(--bg); color:var(--text);
@@ -47,8 +52,23 @@
   #pageDesc { color:var(--dim); font-size:13px; }
   .top .close { margin-left:auto; }
   .layout { height:calc(100% - 66px); display:grid; grid-template-columns:220px 1fr; }
-  .nav { min-height:0; padding:15px 12px; border-right:1px solid var(--line); background:var(--panel); }
+  .nav { min-height:0; padding:15px 12px; border-right:1px solid var(--line); background:var(--panel); overflow:auto; }
   .nav-caption { margin:5px 10px 8px; color:var(--dim); font-size:11px; font-weight:800; letter-spacing:.14em; }
+  /* ツリー: スタジオ／アプリ設定を常に両方見せ、今いる側を強調する（窓は増やさない） */
+  .tree + .tree { margin-top:14px; padding-top:12px; border-top:1px solid var(--line); }
+  .tree-head { display:grid; grid-template-columns:24px 1fr; gap:1px 8px; margin-bottom:6px;
+    padding:7px 10px; border-radius:9px; }
+  .tree-head .tree-ico { grid-row:1/3; font-size:16px; }
+  .nav .tree-head strong { font-size:13px; letter-spacing:.04em; color:var(--dim); }
+  .tree-head small { font-size:11px; color:var(--dim); }
+  .tree.here .tree-head { background:color-mix(in srgb,var(--accent) 8%,transparent); }
+  .nav .tree.here .tree-head strong { color:var(--accent); }
+  .crossnav { display:grid; gap:2px; padding:2px 0 2px 6px; }
+  .nav .crossnav button { display:block; width:100%; margin:0; padding:7px 9px; border:1px solid transparent;
+    border-radius:7px; color:var(--dim); font-size:12px; line-height:1.35; text-align:left; white-space:normal; }
+  .nav .crossnav button:hover { color:var(--text); background:var(--panel2); }
+  .nav .crossnav .crosssub { display:grid; gap:2px; padding-left:21px; }
+  .nav .crossnav .crosssub button { padding:5px 9px; font-size:11px; }
   .nav button { width:100%; display:grid; grid-template-columns:28px 1fr; gap:2px 9px;
     margin-bottom:6px; padding:11px 12px; border:1px solid transparent; border-radius:10px;
     color:var(--dim); background:transparent; text-align:left; cursor:pointer; }
@@ -88,6 +108,17 @@
     border:1px solid var(--line); color:var(--dim); font-size:12px; line-height:1.65; }
   .route { color:var(--accent); font-weight:700; }
   .actions { display:flex; gap:8px; margin-top:12px; }
+  /* OBSに表示する要素（全部入り／文字起こし／翻訳n）ごとのURL行 */
+  .obsrow { margin-top:14px; }
+  .obsrow:first-child { margin-top:0; }
+  .obsrow-top { display:flex; align-items:center; gap:10px; font-size:12px; }
+  .obsrow-label { flex:1; font-weight:700; }
+  .obsrow-bg { display:flex; align-items:center; gap:5px; color:var(--dim); }
+  .obsrow-bg input { width:16px; height:16px; accent-color:var(--accent); }
+  .obsrow-top input[type=color] { width:44px; height:26px; padding:1px; background:var(--panel2);
+    border:1px solid var(--line); border-radius:6px; cursor:pointer; }
+  .obsrow-url { display:flex; gap:8px; margin-top:6px; }
+  .obsrow-url input { flex:1; }
   button { padding:8px 12px; border:1px solid var(--line); border-radius:9px;
     color:var(--text); background:var(--panel2); cursor:pointer; font-weight:700; }
   button:hover { border-color:var(--accent); }
@@ -118,7 +149,29 @@
 </header>
 
 <div class="layout">
-  <nav class="nav" aria-label="アプリ設定の項目">
+  <nav class="nav" aria-label="スタジオとアプリ設定">
+   <div class="tree" data-tree="studio">
+    <div class="tree-head"><span class="tree-ico">🛠</span><strong data-i18n="su.tree_studio">スタジオ</strong><small data-i18n="su.tree_studio_d">字幕の見た目と言葉</small></div>
+    <div class="crossnav" aria-label="スタジオへ移動">
+      <button onclick="openStudio('pillar=captions')" data-i18n="su.p_captions">字幕</button>
+      <div class="crosssub">
+        <button onclick="openStudio('pillar=captions&amp;detail=style')" data-i18n="su.d_style">文字スタイル</button>
+        <button onclick="openStudio('pillar=captions&amp;detail=layout')" data-i18n="su.d_layout">レイアウト</button>
+        <button onclick="openStudio('pillar=captions&amp;detail=words')" data-i18n="su.d_words">認識させる言葉</button>
+      </div>
+      <button onclick="openStudio('pillar=translation')" data-i18n="su.p_translation">翻訳字幕</button>
+      <div class="crosssub">
+        <button onclick="openStudio('pillar=translation&amp;detail=translation-style')" data-i18n="su.d_transstyle">翻訳字幕の見た目</button>
+        <button onclick="openStudio('pillar=translation&amp;detail=translation-words')" data-i18n="su.d_transwords">訳し方を固定する言葉</button>
+      </div>
+      <button onclick="openStudio('pillar=effects')" data-i18n="su.p_effects">ワード演出</button>
+      <button onclick="openStudio('pillar=share')" data-i18n="su.p_share">保存・共有</button>
+      <button onclick="openLyricLab()" data-i18n="su.card_lyric">リリック演出ラボ</button>
+    </div>
+   </div>
+
+   <div class="tree here" data-tree="settings" aria-current="true">
+    <div class="tree-head"><span class="tree-ico">⚙</span><strong data-i18n="st.tree_settings">アプリ設定</strong><small data-i18n="st.tree_settings_d">機器・AI・接続</small></div>
     <div class="nav-caption" data-i18n="st.nav_caption">アプリ設定</div>
     <button data-section="hearing" onclick="switchSection('hearing')"><span class="icon">🎙</span><strong data-i18n="st.nav_hearing">声の聞き取り</strong><small data-i18n="st.nav_hearing_d">マイク・認識・区切り</small></button>
     <button data-section="translation" onclick="switchSection('translation')"><span class="icon">🌐</span><strong data-i18n="st.nav_translation">翻訳</strong><small data-i18n="st.nav_translation_d">翻訳先・使用モデル</small></button>
@@ -127,6 +180,7 @@
     <button data-section="obs" onclick="switchSection('obs')"><span class="icon">🎬</span><strong data-i18n="st.nav_obs">OBS接続</strong><small data-i18n="st.nav_obs_d">表示URL・ポート</small></button>
     <button data-section="other" onclick="switchSection('other')"><span class="icon">⚙</span><strong data-i18n="st.nav_other">その他</strong><small data-i18n="st.nav_other_d">ログ・表示処理</small></button>
     <button data-section="about" onclick="switchSection('about')"><span class="icon">ℹ️</span><strong data-i18n="st.nav_about">情報・連絡先</strong><small data-i18n="st.nav_about_d">バージョン・作者</small></button>
+   </div>
   </nav>
 
   <main class="content">
@@ -174,7 +228,34 @@
             <option value="ko" data-i18n="st.tl_ko">韓国語（試験的）</option>
           </select></div>
           <div class="route" id="translationRoute"></div>
+          <div class="field"><label for="translateLang2" data-i18n="st.f_translang2">2つ目の翻訳言語（同時に併記）</label><select id="translateLang2">
+            <option value="" data-i18n="st.tl_none">追加しない</option>
+            <option value="en" data-i18n="st.tl_en">英語</option>
+            <optgroup label="中国語圏" data-i18n-label="st.tl_group_zh">
+              <option value="zh" data-i18n="st.tl_zh">中国語（簡体字・中国大陸）</option>
+              <option value="zh_tw" data-i18n="st.tl_zhtw">中国語（繁体字・台湾）</option>
+              <option value="zh_hk" data-i18n="st.tl_zhhk">中国語（繁体字・香港）</option>
+            </optgroup>
+            <option value="id" data-i18n="st.tl_id">インドネシア語</option>
+            <option value="ja" data-i18n="st.tl_ja">日本語</option>
+            <option value="ko" data-i18n="st.tl_ko">韓国語（試験的）</option>
+          </select></div>
+          <div class="route" id="translationRoute2"></div>
+          <div class="field"><label for="translateLang3" data-i18n="st.f_translang3">3つ目の翻訳言語（同時に併記）</label><select id="translateLang3">
+            <option value="" data-i18n="st.tl_none">追加しない</option>
+            <option value="en" data-i18n="st.tl_en">英語</option>
+            <optgroup label="中国語圏" data-i18n-label="st.tl_group_zh">
+              <option value="zh" data-i18n="st.tl_zh">中国語（簡体字・中国大陸）</option>
+              <option value="zh_tw" data-i18n="st.tl_zhtw">中国語（繁体字・台湾）</option>
+              <option value="zh_hk" data-i18n="st.tl_zhhk">中国語（繁体字・香港）</option>
+            </optgroup>
+            <option value="id" data-i18n="st.tl_id">インドネシア語</option>
+            <option value="ja" data-i18n="st.tl_ja">日本語</option>
+            <option value="ko" data-i18n="st.tl_ko">韓国語（試験的）</option>
+          </select></div>
+          <div class="route" id="translationRoute3"></div>
           <div class="note" data-i18n="st.note_trans">翻訳モデルは、認識言語と翻訳先に合わせて自動で選ばれます。台湾・香港向けは地域ごとの漢字と語彙に整えます。</div>
+          <div class="note" data-i18n="st.note_trans_multi">翻訳先は最大3言語まで選べ、確定字幕の下に設定順で積んで表示します。言語を増やすほど翻訳モデルのロードと処理量が増えるため、低スペック機では1言語だけがおすすめです。</div>
         </article>
       </div>
     </section>
@@ -225,8 +306,9 @@
       <h1 data-i18n="st.h1_obs">OBS接続</h1><p class="lead" data-i18n="st.lead_obs">字幕をOBSのブラウザソースへ表示するための接続設定です。</p>
       <div class="grid">
         <article class="card wide"><h2 data-i18n="st.card_url">表示用URL</h2><p data-i18n="st.card_url_d">OBSのブラウザソースに貼り付けます。</p>
-          <div class="actions" style="margin-top:0"><input id="obsUrl" type="text" readonly style="flex:1"><button class="primary" id="copyObs" data-i18n="st.btn_copy">コピー</button></div>
+          <div id="obsList"></div>
           <div class="note" data-i18n="st.note_url">推奨サイズは配信解像度と同じです（例：1920×1080）。</div>
+          <div class="note" data-i18n="obs.note_split">字幕と翻訳を別々に置きたいときは、要素ごとのURLをそれぞれのブラウザソースへ貼り付けます。背景色を選ぶと、その色で塗ったページになります（透過のままなら映像に重ねられます）。</div>
         </article>
         <article class="card"><h2 data-i18n="st.card_port">接続ポート</h2><p data-i18n="st.card_port_d">通常は変更する必要はありません。</p>
           <div class="field"><label for="port" data-i18n="st.f_port">ポート番号</label><input id="port" type="number" min="1024" max="65535"></div>
@@ -241,11 +323,16 @@
         <article class="card"><h2 data-i18n="st.card_capproc">字幕処理</h2><p data-i18n="st.card_capproc_d">認識後の文章を整えます。</p>
           <label class="checkrow"><input id="punctuate" type="checkbox"><span><b data-i18n="st.chk_punct">句読点を付ける</b></span></label>
           <label class="checkrow"><input id="saveLog" type="checkbox"><span><b data-i18n="st.chk_savelog">字幕ログを保存する</b><small data-i18n="st.chk_savelog_d">あとから配信内容を確認できます</small></span></label>
-          <div class="actions"><button id="openLogs" data-i18n="st.btn_openlogs">字幕ログの保存フォルダを開く</button></div>
+          <div class="actions"><button id="openLogs" data-i18n="st.btn_openlogs">字幕ログの保存フォルダを開く</button><button id="exportDictLogs" data-i18n="st.btn_exportdictlogs">AI辞書用ログを書き出す</button></div>
+          <div class="note" data-i18n="st.note_dictlogs">書き出したZipをAI（ChatGPT等）に渡すと、誤認識された言葉を聞き取りながら「認識させる単語」の形にまとめてくれます。</div>
         </article>
         <article class="card"><h2 data-i18n="st.card_appscr">アプリ画面</h2><p data-i18n="st.card_appscr_d">OBSに映る字幕の色には影響しません。</p>
           <div class="field"><label for="uiLang" data-i18n="st.f_lang">表示言語</label><select id="uiLang"><option value="ja">日本語</option><option value="zh">中文</option><option value="en">English</option></select></div>
           <div class="field"><label for="theme" data-i18n="st.f_theme">画面テーマ</label><select id="theme"><option value="light" data-i18n="st.opt_light">ライト</option><option value="dark" data-i18n="st.opt_dark">ダーク</option></select></div>
+        </article>
+        <article class="card"><h2 data-i18n="st.card_dev">開発者向け</h2><p data-i18n="st.card_dev_d">不具合を報告するときだけオンにしてください。</p>
+          <label class="checkrow"><input id="devLog" type="checkbox"><span><b data-i18n="st.chk_devlog">開発者ログを残す</b><small data-i18n="st.chk_devlog_d">認識と翻訳の途中経過を記録します（字幕の見た目は変わりません）</small></span></label>
+          <div class="note" data-i18n="st.note_devlog">字幕ログと同じフォルダに、同じ名前の .jsonl ファイルが増えます。「訳がおかしい」などの報告に添えていただくと、どの文がどう翻訳されたかを時刻で追えます。取り出しは上の「字幕ログの保存フォルダを開く」から。</div>
         </article>
       </div>
     </section>
@@ -278,6 +365,7 @@
   const descsJa = { hearing:"マイク・認識・区切りを設定", translation:"翻訳先とモデルを設定", collab:"通話相手の音声を設定", voice:"声でレイアウトを切り替え", obs:"OBSとの接続を設定", other:"ログと画面表示を設定", about:"バージョンと連絡先" };
   const T = (key, jaDefault) => window.MojicastI18n ? window.MojicastI18n.t(key, jaDefault) : jaDefault;
   let cfg = {}, running = false, savedTimer, nameTimer, vcTimer, curSection = "hearing";
+  const SUB_WINDOW_KEY = "sub";   // スタジオ・アプリ設定・リリックラボで共有するサブ窓（app.py の SUB_KEY）
 
   async function api(path, body) {
     const opt = body === undefined ? {} : { method:"POST", body:JSON.stringify(body) };
@@ -285,9 +373,25 @@
   }
   function closeThisWindow() {
     if (window.pywebview && window.pywebview.api && window.pywebview.api.close_window)
-      window.pywebview.api.close_window("settings");
+      window.pywebview.api.close_window(SUB_WINDOW_KEY);
     else window.close();
   }
+  // 補助画面はコックピットに次ぐ「1つの窓」を共有する。左ナビの別ツリーへ移るときは
+  // 新しい窓を開かず、この窓のまま遷移する。表示倍率(s)・キャッシュキー(v)・テーマは
+  // URLでしか伝わらないため、必ず引き継ぐ（落とすと文字サイズと配色が崩れる）。
+  function crossParams() {
+    const keep = [];
+    for (const key of ["s", "v"])
+      if (qs.get(key)) keep.push(`${key}=${encodeURIComponent(qs.get(key))}`);
+    keep.push("theme=" + (document.documentElement.dataset.theme === "light" ? "light" : "dark"));
+    return keep.join("&");
+  }
+  function crossNavigate(path, query) {
+    const q = [query, crossParams()].filter(Boolean).join("&");
+    location.href = path + (q ? "?" + q : "");
+  }
+  function openStudio(query) { crossNavigate("/ui/studio", query || ""); }
+  function openLyricLab() { crossNavigate("/ui/lyric_lab"); }
   // 外部URLはOSの既定ブラウザで開く（WebView2内の target=_blank は開けないため）
   function openExternal(url) {
     if (window.pywebview && window.pywebview.api && window.pywebview.api.open_external)
@@ -326,25 +430,34 @@
     if (section === "collab") loadApps();
   }
   // 言語が切り替わったら動的テキスト（ページ説明）を再適用
-  window.addEventListener("mojicast-lang-changed", () => { $("pageDesc").textContent = T("st.desc_" + curSection, descsJa[curSection]); syncTranslationRoute(); });
+  window.addEventListener("mojicast-lang-changed", () => { $("pageDesc").textContent = T("st.desc_" + curSection, descsJa[curSection]); syncTranslationRoute(); renderObsList(); });
   function syncAsrLanguage() { $("asrLangRow").style.display = $("asrModel").value === "sensevoice" ? "" : "none"; }
+  const TRANS_NAMES = {ja:"日本語",zh:"中国語",en:"英語",ko:"韓国語",id:"インドネシア語",
+    zh_tw:"中国語（台湾繁体字）",zh_hk:"中国語（香港繁体字）"};
+  // 翻訳先1つぶんの経路説明（engine._plan_for_target と同じ判定）
+  function transRouteText(src, tgt) {
+    const names = TRANS_NAMES, regional = ["zh_tw", "zh_hk"].includes(tgt);
+    if (src === tgt) return "認識言語と翻訳先が同じため、翻訳はスキップされます";
+    if (src === "zh" && regional) return `使用処理: OpenCC（中国語 → ${names[tgt]}）`;
+    let model = src === "ja" && tgt === "en" ? "FuguMT" : "M2M-100";
+    if (regional) model += " ＋ OpenCC";
+    return `使用モデル: ${model}（${names[src] || src} → ${names[tgt] || tgt}）`;
+  }
+  // 翻訳先（最大3言語）ごとに、使われるモデルと経路のヒントを出す
   function syncTranslationRoute() {
     const sv = cfg.asr_model === "sensevoice";
     let src = sv && cfg.asr_lang && !["auto","ja"].includes(cfg.asr_lang) ? cfg.asr_lang : "ja";
     if (src === "yue") src = "zh";
-    const tgt = cfg.translate_lang || "en";
-    const names = {ja:"日本語",zh:"中国語",en:"英語",ko:"韓国語",id:"インドネシア語",
-      zh_tw:"中国語（台湾繁体字）",zh_hk:"中国語（香港繁体字）"};
-    const regional = ["zh_tw", "zh_hk"].includes(tgt);
-    if (src === tgt) {
-      $("translationRoute").textContent = "認識言語と翻訳先が同じため、翻訳はスキップされます";
-    } else if (src === "zh" && regional) {
-      $("translationRoute").textContent = `使用処理: OpenCC（中国語 → ${names[tgt]}）`;
-    } else {
-      let model = src === "ja" && tgt === "en" ? "FuguMT" : "M2M-100";
-      if (regional) model += " ＋ OpenCC";
-      $("translationRoute").textContent = `使用モデル: ${model}（${names[src] || src} → ${names[tgt] || tgt}）`;
-    }
+    const tgts = [cfg.translate_lang || "en", cfg.translate_lang2 || "", cfg.translate_lang3 || ""];
+    tgts.forEach((tgt, i) => {
+      const el = $("translationRoute" + (i ? i + 1 : ""));
+      el.style.display = (i && !tgt) ? "none" : "";   // 「追加しない」の欄はヒントごと隠す
+      if (i && !tgt) return;
+      // 先に選んだ翻訳先と同じなら、エンジン側で1経路にまとめられる
+      el.textContent = tgts.slice(0, i).includes(tgt)
+        ? "先に選んだ翻訳先と同じため、1つにまとめられます"
+        : transRouteText(src, tgt);
+    });
   }
   async function loadApps() {
     if (cfg.collab_supported === false) return;   // 未対応OSではヒントを上書きしない
@@ -376,6 +489,7 @@
     bindRange("interval","intervalOut","interval","秒",.4); bindRange("hotwordsScore","hotwordsOut","hotwords_score","",2);
     $("useHotwords").checked = cfg.use_hotwords !== false; $("numArabic").checked = cfg.num_arabic !== false; $("highPrecision").checked = cfg.precision === "fp32";
     $("translate").checked = !!cfg.translate; $("translateLang").value = cfg.translate_lang || "en";
+    $("translateLang2").value = cfg.translate_lang2 || ""; $("translateLang3").value = cfg.translate_lang3 || "";
     $("collab").checked = !!cfg.collab; $("selfName").value = cfg.self_name || ""; $("guestName").value = cfg.guest_name || "";
     if (cfg.collab_supported === false) {   // コラボ未対応OS（mac）: セクションごと無効化
       $("collab").checked = false;
@@ -390,9 +504,9 @@
     }
     $("vcEnabled").checked = !!cfg.vc_enabled; $("vcWake").value = (cfg.vc_wake || []).join("、");
     loadVcCmds();   // カスタムコマンド（非同期・失敗しても他の設定表示は継続）
-    $("obsUrl").value = location.origin + "/"; $("port").value = cfg.port || 8765;
+    renderObsList(); $("port").value = cfg.port || 8765;
     $("punctuate").checked = cfg.punctuate !== false; $("saveLog").checked = cfg.save_log !== false; $("theme").value = cfg.theme || "light";
-    $("uiLang").value = cfg.ui_lang || "ja";
+    $("uiLang").value = cfg.ui_lang || "ja"; $("devLog").checked = !!cfg.dev_log;
     if (cfg.version) $("aboutVer").textContent = "Mojicast v" + cfg.version;
     let sec = qs.get("section") || "hearing";
     if (sec === "collab" && cfg.collab_supported === false) sec = "hearing";   // 未対応OSでは直リンクも逃がす
@@ -422,8 +536,10 @@
   $("useHotwords").addEventListener("change", e => save({use_hotwords:e.target.checked}));
   $("numArabic").addEventListener("change", e => save({num_arabic:e.target.checked}));
   $("highPrecision").addEventListener("change", e => save({precision:e.target.checked ? "fp32" : "int8-fp32"}));
-  $("translate").addEventListener("change", e => save({translate:e.target.checked},false));
-  $("translateLang").addEventListener("change", e => { cfg.translate_lang=e.target.value; syncTranslationRoute(); save({translate_lang:e.target.value}); });
+  $("translate").addEventListener("change", e => { cfg.translate=e.target.checked; renderObsList(); save({translate:e.target.checked},false); });
+  $("translateLang").addEventListener("change", e => { cfg.translate_lang=e.target.value; syncTranslationRoute(); renderObsList(); save({translate_lang:e.target.value}); });
+  $("translateLang2").addEventListener("change", e => { cfg.translate_lang2=e.target.value; syncTranslationRoute(); renderObsList(); save({translate_lang2:e.target.value}); });
+  $("translateLang3").addEventListener("change", e => { cfg.translate_lang3=e.target.value; syncTranslationRoute(); renderObsList(); save({translate_lang3:e.target.value}); });
   $("collab").addEventListener("change", e => save({collab:e.target.checked}));
   $("vcEnabled").addEventListener("change", e => save({vc_enabled:e.target.checked}));
   $("vcWake").addEventListener("input", e => { clearTimeout(vcTimer); vcTimer = setTimeout(() => save({vc_wake:e.target.value.split(/[、,，]/).map(s => s.trim()).filter(Boolean)}), 400); });
@@ -511,15 +627,32 @@
   $("reloadApps").addEventListener("click", loadApps);
   for (const id of ["selfName","guestName"]) $(id).addEventListener("input", e => { clearTimeout(nameTimer); nameTimer=setTimeout(() => save({[e.target.id === "selfName" ? "self_name" : "guest_name"]:e.target.value}),400); });
   $("port").addEventListener("change", async e => { const v=Math.round(+e.target.value); if(v<1024||v>65535){e.target.value=cfg.port;return;} await save({port:v},false); toast(T("st.saved_port","✓ 保存しました。再起動後に反映されます")); });
-  $("copyObs").addEventListener("click", async () => { try { await navigator.clipboard.writeText($("obsUrl").value); } catch(e) { $("obsUrl").select(); document.execCommand("copy"); } toast(T("st.copied_obs","✓ OBS用URLをコピーしました")); });
+  // OBS用URLの一覧（要素ごと・背景色つき）。翻訳設定や表示言語が変わったら描き直す
+  function renderObsList() {
+    if (window.ObsUrl) ObsUrl.render($("obsList"), cfg,
+      { onCopy: () => toast(T("st.copied_obs","✓ OBS用URLをコピーしました")) });
+  }
   $("punctuate").addEventListener("change", e => save({punctuate:e.target.checked},false));
   $("saveLog").addEventListener("change", e => save({save_log:e.target.checked},false));
+  // 開発者ログはセッション開始時に開くので、反映には停止→開始が要る（既定の再起動案内を出す）
+  $("devLog").addEventListener("change", e => save({dev_log:e.target.checked}));
   $("openLogs").addEventListener("click", async () => {
     try {
       const result = await api("/api/logs/open", {});
       if (!result.ok) throw new Error(result.error || "open failed");
       toast(T("st.logs_opened","✓ 字幕ログの保存フォルダを開きました"));
     } catch (e) { toast(T("st.logs_fail","字幕ログの保存フォルダを開けませんでした"), true); }
+  });
+  $("exportDictLogs").addEventListener("click", async () => {
+    try {
+      const r = await api("/api/logs/export", {});
+      if (!r.ok) {
+        if (r.empty) { toast(T("st.dictlogs_empty","書き出せるログがまだありません"), true); return; }
+        throw new Error(r.error || "export failed");
+      }
+      toast(T("st.dictlogs_done","✓ AI辞書用ログを書き出しました（{n}日ぶん）").replace("{n}", r.count));
+      await api("/api/logs/open", {target:"export"});   // 書き出し先を開く
+    } catch (e) { toast(T("st.dictlogs_fail","AI辞書用ログを書き出せませんでした"), true); }
   });
   $("theme").addEventListener("change", e => { applyTheme(e.target.value); save({theme:e.target.value},false); });
   $("uiLang").addEventListener("change", e => { if (window.MojicastI18n) window.MojicastI18n.applyLang(e.target.value); save({ui_lang:e.target.value},false); });

@@ -5,7 +5,7 @@ Mojicast — 配信用リアルタイム字幕アプリ
     reazonspeech-env\\Scripts\\python.exe app.py
 
 - コックピット窓（メイン）: エンジン制御・設定・字幕モニタ・プリセット
-- 単語スタジオ窓（別窓）  : ホットワード登録 / エフェクト単語の管理
+- サブ窓（1つだけ）      : スタジオ / アプリ設定 / リリック演出ラボを同じ窓で切り替え
 - OBS連携                : ブラウザソースに http://localhost:8765 を指定
 """
 import os
@@ -25,16 +25,26 @@ import platform_compat
 UI_SCALE = platform_compat.ui_scale()   # コックピット等のGUI窓のみ。overlayには効かせない
 UI_SESSION = int(time.time())  # WebView2が前回のUIを復元しないための起動単位キャッシュキー
 
+# 補助画面（スタジオ／アプリ設定／リリック演出ラボ）は「コックピット＋サブ窓1つ」に統合する。
+# 画面ごとに窓を増やすと、どのツリーのどこにいるのか利用者が見失うため（各画面の左ナビが
+# スタジオ・アプリ設定の両方を常時ツリー表示し、窓を増やさず行き来する）。
+SUB_KEY = "sub"
+# 旧APIから渡ってくる窓キー。互換のため同じサブ窓へ寄せる
+LEGACY_SUB_KEYS = ("studio", "settings", "lyric_lab")
+SUB_SIZE = (1120, 840)   # 遷移のたびにリサイズはしない。一番広い画面に合わせて固定
+SUB_TITLE = "スタジオ・設定 — Mojicast"
+
 
 class JsApi:
     """コックピットの JS から呼べるネイティブAPI"""
 
     def __init__(self, port):
-        self._windows = {}   # key -> webview.Window
+        self._windows = {}   # key -> webview.Window（キーは SUB_KEY のみ）
         self._port = port    # 実際に起動しているポート（configの値ではなく起動時の実ポート）
         self._closing = False
 
-    def _open(self, key, title, path, width, height):
+    def _open(self, title, path):
+        """サブ窓を開く。既に開いていれば同じ窓のURLだけ差し替えて前面へ戻す"""
         if self._closing:
             return
         # configを読み直さず起動時の実ポートを使う。ポート変更は次回起動時反映で、
@@ -45,11 +55,12 @@ class JsApi:
         background = "#f7f9fc" if theme == "light" else "#0d1117"
         url = (f"http://127.0.0.1:{port}{path}{sep}s={UI_SCALE}&v={UI_SESSION}"
                f"&theme={theme}")
-        existing = self._windows.get(key)
+        existing = self._windows.get(SUB_KEY)
         if existing is not None:
-            # 同じ設定窓が開いていても、コックピットで押した入口へ切り替える。
+            # 同じサブ窓が開いていても、コックピットで押した入口へ切り替える。
             # 例: 「字幕」表示中にコックピットから「翻訳」の設定を押した場合。
             existing.load_url(url)
+            self._set_title_quietly(existing, f"{title} — Mojicast")
             # show() はWindows実装で Activate() も呼ぶ。最小化されている場合も
             # restore() してから前面へ戻し、内容だけ裏で変わる状態を防ぐ。
             existing.restore()
@@ -58,10 +69,18 @@ class JsApi:
         w = webview.create_window(
             f"{title} — Mojicast",
             url,
-            width=int(width * UI_SCALE), height=int(height * UI_SCALE),
+            width=int(SUB_SIZE[0] * UI_SCALE), height=int(SUB_SIZE[1] * UI_SCALE),
             background_color=background, js_api=self)
-        self._windows[key] = w
-        w.events.closed += lambda: self._windows.pop(key, None)
+        self._windows[SUB_KEY] = w
+        w.events.closed += lambda: self._windows.pop(SUB_KEY, None)
+
+    @staticmethod
+    def _set_title_quietly(window, title):
+        """タイトル更新は表示上の親切。バックエンドが未対応でも遷移は止めない"""
+        try:
+            window.set_title(title)
+        except Exception:
+            pass
 
     def close_all_windows(self):
         """メイン窓の終了に合わせ、残っている補助窓をすべて閉じる"""
@@ -76,27 +95,31 @@ class JsApi:
                 pass
 
     def open_studio(self, query=""):
-        """字幕の見た目と言葉を作るスタジオを別窓で開く
+        """字幕の見た目と言葉を作るスタジオをサブ窓で開く
 
         query 例: "pillar=captions" / "pillar=translation" / "detail=words"
         """
         path = "/ui/studio" + (f"?{query}" if query else "")
-        self._open("studio", "スタジオ", path, 1120, 840)
+        self._open("スタジオ", path)
 
     def open_settings(self, query=""):
-        """機器・AI・接続を扱うアプリ設定を別窓で開く"""
+        """機器・AI・接続を扱うアプリ設定をサブ窓で開く（スタジオと同じ窓）"""
         path = "/ui/settings" + (f"?{query}" if query else "")
-        self._open("settings", "アプリ設定", path, 980, 760)
+        self._open("アプリ設定", path)
 
     def open_lyric_lab(self):
-        """リリック演出の比較デモを別窓で開く"""
-        self._open("lyric_lab", "リリック演出ラボ", "/ui/lyric_lab", 1280, 800)
+        """リリック演出の比較デモをサブ窓で開く（スタジオと同じ窓）"""
+        self._open("リリック演出ラボ", "/ui/lyric_lab")
 
     def close_window(self, key):
-        """WebView内の window.close() では閉じられない補助窓をネイティブに閉じる"""
-        if key not in ("studio", "settings", "lyric_lab"):
+        """WebView内の window.close() では閉じられないサブ窓をネイティブに閉じる
+
+        窓は1つに統合したが、各画面が渡す旧キー（studio/settings/lyric_lab）も
+        受け付ける。呼び出し元のHTMLとネイティブ側の更新がずれても閉じられるように。
+        """
+        if key != SUB_KEY and key not in LEGACY_SUB_KEYS:
             return {"ok": False}
-        window = self._windows.pop(key, None)
+        window = self._windows.pop(SUB_KEY, None)
         if window is None:
             return {"ok": True}
         # この呼び出し自体が「閉じようとしている窓」のWebViewから来ている。

@@ -9,9 +9,13 @@ transcribe_stream.py の疑似ストリーミング処理を、開始/停止で�
     on_final(text, fid)    確定（単語置換・句読点適用済み）。fid は行の通し番号
     on_level(rms)          マイク入力レベル 0.0-1.0（約100ms間隔）
     on_state(state, detail) loading / ready / running / stopped / error
-    on_translation(fid, en) 確定行の英訳（別スレッドで遅れて届く。fid で行に対応）
+    on_translation(fid, lang, text) 確定行の翻訳（別スレッドで遅れて届く。
+                            fid で行に対応。lang は翻訳先コード。翻訳先を
+                            追加していると、同じ fid に対して翻訳先の数だけ
+                            届く＝最大3言語ぶん）
 """
 import os
+import json
 import time
 import queue
 import threading
@@ -28,6 +32,17 @@ SAMPLE_RATE = 16000
 WINDOW_SIZE = 512
 PARTIAL_WINDOW_SEC = 6.0   # 途中経過(薄文字)がデコードする末尾の秒数
 VAD_MODEL_PATH = os.path.join(BASE, "silero_vad.onnx")
+
+# 日次ログ（logs/daily/01.txt〜31.txt）の置き場。月をまたぐと同じ日番号の
+# ファイルを上書きするので、常に「直近1か月ぶん」だけが残る。
+# app_server.py の書き出し（/api/logs/export）もこの名前を参照する。
+DAILY_LOG_DIR_NAME = "daily"
+
+# 開発者ログ（cfg["dev_log"]）の拡張子。セッション別の字幕ログ（.log）と同じ
+# フォルダに、同じ名前で対にして置く（2026-08-16_213000.log / .jsonl）。
+# 1行1イベントのJSONで、確定文の後処理と翻訳の入出力を時刻つきで残す。
+# 「訳文だけおかしい」たぐいの不具合を、あとから字幕ログと突き合わせるためのもの。
+DEV_LOG_EXT = ".jsonl"
 
 # 過負荷やデバイス異常時にもメモリを無制限に使わないための待ち行列上限。
 # 音声は約30秒、翻訳は128発話ぶんを保持する。通常配信では到達しない余裕を
@@ -76,6 +91,16 @@ def _offer_bounded_latest(q, item, recover_to):
     return dropped
 
 
+def _note_step(steps, name, text):
+    """確定文の後処理を1段階ぶん記録する（開発者ログ用）。
+
+    steps が None（開発者モードOFF）なら何もしない。文が変わらなかった段階は
+    残さないので、ログを見れば「どの処理が文を壊したか」だけが並ぶ。
+    """
+    if steps is not None and steps[-1][1] != text:
+        steps.append((name, text))
+
+
 def _hub_dir():
     """HFキャッシュの hub ディレクトリ（凍結時は exe隣 models/hub、開発時はユーザキャッシュ）"""
     home = os.environ.get("HF_HOME") or os.path.join(
@@ -104,7 +129,7 @@ class CaptionEngine:
         self.on_final = on_final or (lambda t, fid, spk="": None)
         self.on_level = on_level or (lambda v, spk="": None)
         self.on_state = on_state or (lambda s, d="": None)
-        self.on_translation = on_translation or (lambda fid, en: None)
+        self.on_translation = on_translation or (lambda fid, lang, text: None)
         self._rec_lock = threading.Lock()   # 単一Recognizerへの decode を直列化（2話者共有）
         self._fid_lock = threading.Lock()   # fid採番の排他（話者をまたいで一意に）
         self._translate_on = False
@@ -113,14 +138,19 @@ class CaptionEngine:
         self._model_sig = None      # (precision, hotwords mtime, score) 変更検知
         self._replacer = None
         self._punct = None
-        self._translate = None      # 翻訳関数（無効時 None。ロード済みなら再利用）
-        self._translate_sig = None  # ロード済み翻訳経路 (engine, src, tgt)
+        self._translators = []      # [(engine, tgt, 翻訳関数)]（無効時は空。ロード済みなら再利用）
+        self._translate_sig = None  # ロード済み翻訳経路 ((engine, src, tgt), ...)
         self._asr_caps = {"hotwords": True, "punct": False,
                           "spaces": False, "multilang": False}  # 既定=k2
         self._tq = None             # 翻訳ジョブのキュー
         self._tworker = None        # 翻訳ワーカースレッド
         self._fid = 0               # 確定行の通し番号（英訳の対応付け用）
         self._logf = None           # 文字起こしログのファイルハンドル（無効時 None）
+        self._dailyf = None         # 日次ログ logs/daily/日番号.txt のハンドル
+        self._daily_key = None      # 日次ログを開いた (年, 月, 日)。変わったら開き直す
+        self._save_log = False      # 文字起こしログを残す設定か
+        self._devf = None           # 開発者ログ(jsonl)のハンドル（OFF時 None）
+        self._dev_lock = threading.Lock()   # 認識2スレッド＋翻訳ワーカーの書き込みを直列化
         self._mask = None           # 禁止ワードの伏せ字化関数（無効時 None）
         self._gloss = None          # 英訳辞書 [(表記, 英訳)]（無効時 None）
         self._load_warn = ""        # 直近ロードの非致命的警告（英訳/句読点の失敗）
@@ -144,7 +174,11 @@ class CaptionEngine:
     def _open_log(self, cfg):
         """セッション開始時に logs/日付/日付時刻.log を開く（無効・失敗時は None のまま）"""
         self._logf = None
-        if not cfg.get("save_log", True):
+        self._close_daily_log()
+        self._daily_key = None      # セッションごとに日次ログも開き直す
+        self._open_dev_log(cfg)     # 開発者ログは save_log とは独立に開く
+        self._save_log = bool(cfg.get("save_log", True))
+        if not self._save_log:
             return
         try:
             now = datetime.now()
@@ -155,19 +189,150 @@ class CaptionEngine:
         except OSError:
             self._logf = None       # 書けなくても認識は続行
 
+    def _open_daily_log(self, now):
+        """日次ログ（logs/daily/日番号.txt）を「今日」のぶんに合わせて開き直す。
+
+        AI に辞書づくりを手伝わせるための、最近1か月ぶんだけが残るログ。
+        同じ年月のあいだは追記し、既存ファイルの最終更新が別の年月なら
+        truncate してから書く（＝翌月の同じ日に上書きが始まる＝31本で一巡）。
+        セッションが日付を跨いだ場合も (年,月,日) の変化で開き直す。
+        """
+        key = (now.year, now.month, now.day)
+        if self._daily_key == key:
+            return                  # 同じ日のあいだは開きっぱなし
+        self._close_daily_log()
+        self._daily_key = key       # 失敗しても日が変わるまで再試行しない
+        try:
+            d = os.path.join(DATA_BASE, "logs", DAILY_LOG_DIR_NAME)
+            os.makedirs(d, exist_ok=True)
+            path = os.path.join(d, f"{now.day:02d}.txt")
+            mode = "a"
+            try:
+                mtime = datetime.fromtimestamp(os.path.getmtime(path))
+                if (mtime.year, mtime.month) != (now.year, now.month):
+                    mode = "w"      # 先月以前の中身 → 捨ててから書き始める
+            except OSError:
+                pass                # まだ無いファイル → 新規作成（"a" のまま）
+            self._dailyf = open(path, mode, encoding="utf-8")
+        except OSError:
+            self._dailyf = None     # 書けなくても認識は続行
+
     def _log_final(self, text, speaker=""):
-        """確定行を [発言時刻] (話者) 本文 で追記（例外は握りつぶす）"""
-        if self._logf is None:
+        """確定行を [発言時刻] (話者) 本文 で追記（例外は握りつぶす）
+
+        セッション別ログ（logs/日付/）と、AI辞書づくり用の日次ログ
+        （logs/daily/）の両方へ同じ行を書く。
+        """
+        if not self._save_log:
+            return
+        now = datetime.now()
+        ts = now.strftime("%Y-%m-%d %H:%M:%S")
+        who = f"[{speaker}] " if speaker else ""
+        line = f"[{ts}] {who}{text}\n"
+        if self._logf is not None:
+            try:
+                self._logf.write(line)
+                self._logf.flush()  # クラッシュしても残るよう都度フラッシュ
+            except OSError:
+                pass
+        self._open_daily_log(now)
+        if self._dailyf is not None:
+            try:
+                self._dailyf.write(line)
+                self._dailyf.flush()
+            except OSError:
+                pass
+
+    def _close_daily_log(self):
+        if self._dailyf is not None:
+            try:
+                self._dailyf.close()
+            except OSError:
+                pass
+            self._dailyf = None
+
+    # ---------------- 開発者ログ（jsonl） ----------------
+
+    def _open_dev_log(self, cfg):
+        """開発者モードONのときだけ logs/日付/日付時刻.jsonl を開く。
+
+        字幕ログ（save_log）とは独立に開閉する。不具合報告を頼むときに
+        「配信内容のテキストは残したくないが詳細は欲しい」も、その逆もあるため。
+        """
+        self._close_dev_log()
+        if not cfg.get("dev_log", False):
             return
         try:
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            who = f"[{speaker}] " if speaker else ""
-            self._logf.write(f"[{ts}] {who}{text}\n")
-            self._logf.flush()      # クラッシュしても残るよう都度フラッシュ
+            now = datetime.now()
+            d = os.path.join(DATA_BASE, "logs", now.strftime("%Y-%m-%d"))
+            os.makedirs(d, exist_ok=True)
+            path = os.path.join(
+                d, now.strftime("%Y-%m-%d_%H%M%S") + DEV_LOG_EXT)
+            self._devf = open(path, "a", encoding="utf-8")
         except OSError:
-            pass
+            self._devf = None       # 書けなくても認識は続行
+            return
+        # セッションの前提（どのモデルで・どこへ翻訳したか）を先頭に1行残す。
+        # 訳文の不具合は経路依存なので、これが無いと後から再現できない。
+        self._dev_event(
+            "session",
+            asr_model=cfg.get("asr_model", ""), asr_lang=cfg.get("asr_lang", ""),
+            translate=bool(cfg.get("translate", False)),
+            langs=[cfg.get("translate_lang", ""), cfg.get("translate_lang2", ""),
+                   cfg.get("translate_lang3", "")],
+            punctuate=bool(cfg.get("punctuate", True)),
+            num_arabic=bool(cfg.get("num_arabic", True)),
+            word_profile=cfg.get("word_profile", ""),
+            save_log=bool(cfg.get("save_log", True)))
+
+    def _dev_event(self, ev, **fields):
+        """開発者ログへ1行（JSON）追記する（OFF・失敗時は何もしない）。
+
+        時刻は字幕ログの `[YYYY-MM-DD HH:MM:SS]` と突き合わせられるよう
+        同じ書式にミリ秒を足したもの。例外は握りつぶす（字幕を止めない）。
+        """
+        if self._devf is None:
+            return
+        rec = {"ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+               "ev": ev}
+        rec.update(fields)
+        try:
+            line = json.dumps(rec, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return                  # 想定外の値が混じっても落とさない
+        with self._dev_lock:
+            if self._devf is None:  # 停止と同時に閉じられた
+                return
+            try:
+                self._devf.write(line + "\n")
+                self._devf.flush()  # クラッシュしても残るよう都度フラッシュ
+            except (OSError, ValueError):
+                pass
+
+    def _dev_final(self, fid, speaker, text, steps):
+        """確定文1行ぶんを開発者ログへ（後処理の各段階つき）。
+
+        fid が None なら後処理で消えた行（画面にも字幕ログにも出ない）。
+        認識そのものが空だった呼び出しは記録しない（無音のたびに増えるため）。
+        """
+        if steps is None or not steps[0][1]:
+            return
+        self._dev_event("final" if fid is not None else "drop",
+                        fid=fid, speaker=speaker, text=text,
+                        steps=[{"by": n, "text": t} for n, t in steps])
+
+    def _close_dev_log(self):
+        with self._dev_lock:
+            f, self._devf = self._devf, None
+        if f is not None:
+            try:
+                f.close()
+            except OSError:
+                pass
 
     def _close_log(self):
+        self._close_dev_log()
+        self._close_daily_log()
         if self._logf is not None:
             try:
                 self._logf.close()
@@ -221,15 +386,12 @@ class CaptionEngine:
         except OSError:
             pass                    # ログが書けなくても本体は続行
 
-    def _translate_plan(self, cfg):
-        """cfg から翻訳経路を決める → ("fugumt"|"m2m", 原文言語, 翻訳先) / 不要なら None
+    def _plan_for_target(self, cfg, tgt):
+        """翻訳先1つの経路を決める → ("fugumt"|"m2m"|"opencc", 原文言語, 翻訳先) / 不要なら None
 
         原文言語は通常 ja。SenseVoiceで認識言語を明示している場合はそれに合わせる
         （例: 中国語認識＋英訳 → M2Mの zh→en）。原文=翻訳先のときは None（翻訳不要）。
         """
-        if not cfg.get("translate", False):
-            return None
-        tgt = cfg.get("translate_lang", "en")
         src = "ja"
         if cfg.get("asr_model", "k2-ja") == "sensevoice":
             al = cfg.get("asr_lang", "auto")
@@ -245,6 +407,26 @@ class CaptionEngine:
             return ("opencc", src, tgt)
         eng = "fugumt" if (src, tgt) == ("ja", "en") else "m2m"
         return (eng, src, tgt)
+
+    def _translate_plans(self, cfg):
+        """cfg から翻訳経路を決める → (plan, ...) のタプル / 翻訳不要なら空タプル
+
+        第1翻訳先(translate_lang)から第3翻訳先(translate_lang3)までを設定順に
+        解決する。第2・第3は空=無効。重複（同じ翻訳先を2つ選んだ等）は
+        1つにまとめる。
+        """
+        if not cfg.get("translate", False):
+            return ()
+        plans = []
+        for tgt in (cfg.get("translate_lang", "en"),
+                    cfg.get("translate_lang2", ""),
+                    cfg.get("translate_lang3", "")):
+            if not tgt:
+                continue
+            plan = self._plan_for_target(cfg, tgt)
+            if plan is not None and plan not in plans:
+                plans.append(plan)
+        return tuple(plans)
 
     def _expected_download_mb(self, cfg):
         """この設定で未キャッシュのモデルの合計DLサイズ(MB)と、DLが要るかを返す"""
@@ -263,13 +445,13 @@ class CaptionEngine:
             import punct
             if not punct.cached():
                 total += _MODEL_SIZES_MB["punct"]
-        plan = self._translate_plan(cfg)
-        if plan:
+        plans = self._translate_plans(cfg)
+        if plans:
             import translate
-            if plan[0] == "m2m":
-                if not translate.cached_zh():
-                    total += _MODEL_SIZES_MB["translate_zh"]
-            elif plan[0] == "fugumt" and not translate.cached():
+            engines = {p[0] for p in plans}
+            if "m2m" in engines and not translate.cached_zh():
+                total += _MODEL_SIZES_MB["translate_zh"]
+            if "fugumt" in engines and not translate.cached():
                 total += _MODEL_SIZES_MB["translate"]
         return total, total > 0
 
@@ -314,11 +496,11 @@ class CaptionEngine:
             self._punct = None
         need_punct = (cfg.get("punctuate", True)
                       and not model_caps["punct"] and self._punct is None)
-        plan = self._translate_plan(cfg)
-        need_trans = plan is not None and self._translate_sig != plan
-        if cfg.get("translate", False) and plan is None:
+        plans = self._translate_plans(cfg)
+        need_trans = bool(plans) and self._translate_sig != plans
+        if cfg.get("translate", False) and not plans:
             # 認識言語と翻訳先が同じ（例: 中国語認識＋中国語訳）→ 翻訳は無意味
-            self._translate = None
+            self._translators = []
             self._translate_sig = None
             self._load_warn = "認識言語と翻訳先が同じため、翻訳はスキップされます"
         if not (reload_asr or need_punct or need_trans):
@@ -371,41 +553,50 @@ class CaptionEngine:
                     self._log_load_error("句読点モデル")
 
             if need_trans:
-                eng, src, tgt = plan
-                label = {"en": "英訳", "zh": "中国語（簡体字）訳",
-                         "zh_tw": "中国語（台湾繁体字）訳",
-                         "zh_hk": "中国語（香港繁体字）訳",
-                         "ja": "日本語訳", "ko": "韓国語訳",
-                         "id": "インドネシア語訳"}.get(tgt, f"{tgt}訳")
-                self.on_state("loading", f"翻訳モデル({label})をロード中...")
-                try:
-                    if eng == "fugumt":
-                        from translate import translate as _tr, load_translator
-                        load_translator()
-                        self._translate = _tr
-                    elif eng == "opencc":
-                        from translate import convert_zh_variant
-                        # 初回変換をここで行い、依存ファイル不足を字幕開始前に検出する。
-                        convert_zh_variant("测试", tgt)
-                        self._translate = (lambda t, _t=tgt:
-                                           convert_zh_variant(t, _t))
-                    else:
-                        from translate import translate_m2m, load_translator_zh
-                        load_translator_zh()
-                        self._translate = (lambda t, _s=src, _t=tgt:
-                                           translate_m2m(t, _s, _t))
-                    self._translate_sig = plan
-                    # 切替で使わなくなった側の翻訳バックエンドを解放（メモリ返却）
-                    from translate import unload as unload_translator
-                    if eng != "fugumt":
-                        unload_translator("fugumt")
-                    if eng != "m2m":
-                        unload_translator("m2m")
-                except Exception:
-                    self._translate = None
-                    self._translate_sig = None
-                    self._load_warn = f"{label}の読み込みに失敗（翻訳なしで続行）"
-                    self._log_load_error(f"翻訳モデル({label})")
+                labels = {"en": "英訳", "zh": "中国語（簡体字）訳",
+                          "zh_tw": "中国語（台湾繁体字）訳",
+                          "zh_hk": "中国語（香港繁体字）訳",
+                          "ja": "日本語訳", "ko": "韓国語訳",
+                          "id": "インドネシア語訳"}
+                translators = []
+                failed = []
+                for eng, src, tgt in plans:
+                    label = labels.get(tgt, f"{tgt}訳")
+                    self.on_state("loading", f"翻訳モデル({label})をロード中...")
+                    try:
+                        if eng == "fugumt":
+                            from translate import translate as _tr, load_translator
+                            load_translator()
+                            fn = _tr
+                        elif eng == "opencc":
+                            from translate import convert_zh_variant
+                            # 初回変換をここで行い、依存ファイル不足を字幕開始前に検出する。
+                            convert_zh_variant("测试", tgt)
+                            fn = (lambda t, _t=tgt:
+                                  convert_zh_variant(t, _t))
+                        else:
+                            from translate import translate_m2m, load_translator_zh
+                            load_translator_zh()
+                            fn = (lambda t, _s=src, _t=tgt:
+                                  translate_m2m(t, _s, _t))
+                        translators.append((eng, tgt, fn))
+                    except Exception:
+                        # 片方の翻訳先が失敗しても、成功した側だけで続行する
+                        failed.append(label)
+                        self._log_load_error(f"翻訳モデル({label})")
+                self._translators = translators
+                # 失敗があれば sig を残さず、次回開始時に再ロードを試みる
+                self._translate_sig = plans if not failed else None
+                # 切替で使わなくなった側の翻訳バックエンドを解放（メモリ返却）
+                used = {eng for eng, _tgt, _fn in translators}
+                from translate import unload as unload_translator
+                if "fugumt" not in used:
+                    unload_translator("fugumt")
+                if "m2m" not in used:
+                    unload_translator("m2m")
+                if failed:
+                    self._load_warn = ("・".join(failed)
+                                       + "の読み込みに失敗（その言語の翻訳なしで続行）")
         finally:
             stop_evt.set()
             if mon is not None:
@@ -544,26 +735,46 @@ class CaptionEngine:
         return not thread.is_alive()
 
     def _translate_loop(self):
-        """確定行を順に英訳する（認識ループとは別スレッド）"""
+        """確定行を順に翻訳する（認識ループとは別スレッド）。
+        翻訳先が複数のときは同じ確定行を各翻訳先へ順に翻訳して通知する。"""
         q = self._tq
         while True:
             item = q.get()
             if item is None:      # 停止サインで終了
                 break
             fid, text = item
-            # 英訳辞書: 翻訳前に日本語側で英訳語へ置換（固有名詞の訳を固定）。
-            # 適用は日→英（FuguMT）のみ。他方向では英単語を注入してしまうため
-            if self._gloss and (self._translate_sig or ("",))[0] == "fugumt":
-                for ja, en_word in self._gloss:
-                    if ja in text:
-                        text = text.replace(ja, en_word)
-            try:
-                en = self._translate(text) if self._translate else ""
-            except Exception:
-                en = ""           # 翻訳失敗は無視（字幕本体は出続ける）
-                self._log_translate_error(text)
-            if en and self._translate_on:
-                self.on_translation(fid, en)
+            for eng, tgt, fn in self._translators:
+                src_text = text
+                # 英訳辞書: 翻訳前に日本語側で英訳語へ置換（固有名詞の訳を固定）。
+                # 適用は日→英（FuguMT）のみ。他方向では英単語を注入してしまうため
+                if self._gloss and eng == "fugumt":
+                    for ja, en_word in self._gloss:
+                        if ja in src_text:
+                            src_text = src_text.replace(ja, en_word)
+                t0 = time.time()
+                err = ""
+                try:
+                    out = fn(src_text)
+                except Exception as e:
+                    out = ""      # 翻訳失敗は無視（字幕本体は出続ける）
+                    err = repr(e)
+                    self._log_translate_error(src_text)
+                shown = bool(out) and self._translate_on
+                if self._devf is not None:
+                    rec = {"fid": fid, "engine": eng, "lang": tgt,
+                           "src": text, "out": out,
+                           "ms": round((time.time() - t0) * 1000, 1)}
+                    if src_text != text:
+                        rec["glossed"] = src_text   # 英訳辞書で置換した実入力
+                    if err:
+                        rec["error"] = err
+                    if not shown:
+                        # 空訳・停止直後で画面に出なかった。訳文が「出ない」
+                        # 不具合と「変」な不具合を区別するために残す。
+                        rec["shown"] = False
+                    self._dev_event("translate", **rec)
+                if shown:
+                    self.on_translation(fid, tgt, out)
 
     def _log_translate_error(self, text):
         """英訳ワーカーで起きた例外を translate_error.log に残す（無言失敗の可視化）"""
@@ -690,34 +901,47 @@ class CaptionEngine:
                         text = self._recognize(samples)
                         self.perf["final_n"] += 1
                         self.perf["final_ms"] += (time.time() - t0) * 1000
+                        # 開発者モードON時だけ後処理の途中経過を持ち回る（OFF=None）
+                        steps = [("asr", text)] if self._devf is not None else None
                         if text:
                             if self._asr_caps.get("spaces"):
                                 from asr_model import strip_cjk_spaces
                                 text = strip_cjk_spaces(text)
+                                _note_step(steps, "spaces", text)
                             if self._replacer is not None:
                                 text = self._replacer(text)
+                                _note_step(steps, "replace", text)
                             # SenseVoice系は句読点・数字正規化(ITN)を内蔵しているため
                             # 後段のnumnorm/BERTはスキップ（日本語以外にBERTは使えない）
                             if (cfg.get("num_arabic", True)
                                     and not self._asr_caps.get("punct")):
                                 text = normalize_numbers(text)   # 三十五 → 35
+                                _note_step(steps, "num", text)
                             if (self._punct is not None
                                     and cfg.get("punctuate", True)
                                     and not self._asr_caps.get("punct")):
                                 text = self._punct(text)
+                                _note_step(steps, "punct", text)
                             if self._mask is not None:      # 禁止ワードを伏せ字化
                                 text = self._mask(text)
+                                _note_step(steps, "mask", text)
                         if text:
                             fid = self._next_fid()
                             self.on_final(text, fid, speaker)
                             self._log_final(text, speaker)
+                            self._dev_final(fid, speaker, text, steps)
                             if self._translate_on:
-                                _offer_bounded_latest(
+                                dropped = _offer_bounded_latest(
                                     self._tq, (fid, text),
                                     TRANSLATION_QUEUE_RECOVER_ITEMS)
+                                if dropped:
+                                    # 翻訳が追いつかず捨てた行。訳文の欠落・ずれの
+                                    # 原因になるので開発者ログには必ず残す。
+                                    self._dev_event("tq_drop", fid=fid, n=dropped)
                         else:
                             # 後処理で空になった発話は出さず、薄文字だけ消す
                             self.on_partial("", speaker)
+                            self._dev_final(None, speaker, text, steps)
                         last_partial_len = 0
                         partial_gap = interval_samples   # 新しい発話は素早く出す
 
@@ -746,6 +970,11 @@ class CaptionEngine:
                             if self._asr_caps.get("spaces"):
                                 from asr_model import strip_cjk_spaces
                                 p = strip_cjk_spaces(p)
+                            if self._replacer is not None:
+                                # 認識中(薄文字)も登録単語の表記へ寄せる。確定で
+                                # 表記が変わると「登録が効いていない」ように見え、
+                                # 薄文字のエフェクト照合も外れるため
+                                p = self._replacer(p)
                             if (cfg.get("num_arabic", True)
                                     and not self._asr_caps.get("punct")):
                                 p = normalize_numbers(p)
@@ -789,8 +1018,8 @@ class CaptionEngine:
                 self._finish_session("stopped", "停止しました")
                 return
 
-            # 英訳ワーカー起動（この設定で有効なときだけ）。確定行を別スレッドで翻訳し認識を止めない
-            self._translate_on = cfg.get("translate", False) and self._translate is not None
+            # 翻訳ワーカー起動（この設定で有効なときだけ）。確定行を別スレッドで翻訳し認識を止めない
+            self._translate_on = cfg.get("translate", False) and bool(self._translators)
             self._tq = queue.Queue(maxsize=TRANSLATION_QUEUE_MAX_ITEMS)
             self._tworker = None
             if self._translate_on:

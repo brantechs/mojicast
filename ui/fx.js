@@ -156,6 +156,9 @@
     position:absolute; margin:0; line-height:1.08; white-space:nowrap;
     will-change:transform,opacity,filter,clip-path;
   }
+  .lyr-tr { position:absolute; left:50%; bottom:4%; transform:translateX(-50%);
+    max-width:94%; text-align:center; line-height:1.3; white-space:normal;
+    word-break:break-word; will-change:transform,opacity; }
   .lyr-char,.lyr-word { display:inline-block; white-space:pre; will-change:transform,opacity,filter; }
   .lyr-vertical { writing-mode:vertical-rl; text-orientation:upright; }
   .lyr-outline { color:transparent !important; -webkit-text-stroke:.035em var(--lyr-color,#fff); text-shadow:none !important; }
@@ -448,11 +451,13 @@
       clipEl.style.borderRadius = (box.radius ?? 0) + "px";
       clipEl.style.overflow = mode === "lyric" ? "visible" : "hidden";
       // 出口エッジのフェード（flow=上端 / vertical=右端）
+      // flow の出口は下アンカー（valign=bottom）のときだけ上端。上寄せ・上下中央は
+      // 行が下へ伸びるので出口が定まらず、マスクを敷くと文字が薄れて読めなくなる。
       const fade = box.fadePx ?? 36;
       let mask = "";
       if (mode === "vertical")
         mask = `linear-gradient(to left, transparent 0, #000 ${fade}px)`;
-      else if (mode !== "lyric")
+      else if (mode !== "lyric" && (box.valign || "bottom") === "bottom")
         mask = `linear-gradient(to bottom, transparent 0, #000 ${fade}px)`;
       clipEl.style.webkitMaskImage = mask;
       clipEl.style.maskImage = mask;
@@ -468,12 +473,26 @@
       scrollEl.style.top = pad;
       scrollEl.style.bottom = pad;
       scrollEl.style.right = "auto";
+      scrollEl.style.transform = "";   // flow(上下中央)から切り替えた残りを掃除
     } else {
+      // flow: box.valign で縦の寄せを決める（既定=下アンカー＝従来どおり）
+      const valign = box.valign || "bottom";
       scrollEl.style.writingMode = "";
       scrollEl.style.left = pad;
       scrollEl.style.right = pad;
-      scrollEl.style.bottom = pad;
-      scrollEl.style.top = "auto";
+      if (valign === "top") {
+        scrollEl.style.top = pad;
+        scrollEl.style.bottom = "auto";
+        scrollEl.style.transform = "";
+      } else if (valign === "middle") {
+        scrollEl.style.top = "50%";
+        scrollEl.style.bottom = "auto";
+        scrollEl.style.transform = "translateY(-50%)";
+      } else {
+        scrollEl.style.bottom = pad;
+        scrollEl.style.top = "auto";
+        scrollEl.style.transform = "";   // 前モードのインラインtransformを掃除
+      }
     }
     scrollEl.style.textAlign = box.align || "left";
   };
@@ -484,7 +503,11 @@
    * スクロールアニメ完了後（smoothMs+α）に呼ぶこと。最新行は消さない。
    */
   FX.pruneClipped = function (clipEl, linesEl, box) {
-    if ((box.mode || "flow") === "lyric") return;
+    const mode = box.mode || "flow";
+    if (mode === "lyric") return;
+    // 上寄せ・上下中央は「上端から出ていく」前提が崩れる（行は下へ伸びる）ので
+    // クリップ判定は行わない。行数トリム（maxLines）に任せる。
+    if (mode !== "vertical" && (box.valign || "bottom") !== "bottom") return;
     const r = clipEl.getBoundingClientRect();
     const vert = box.mode === "vertical";
     const kids = [...linesEl.children];
@@ -494,48 +517,89 @@
       if (line._pruning) continue;
       const lr = line.getBoundingClientRect();
       const clipped = vert ? (lr.right > r.right + 1) : (lr.top < r.top - 1);
-      if (clipped) {
-        line._pruning = true;
-        line.animate([{ opacity: 1 }, { opacity: 0 }],
-          { duration: 350, easing: "ease-out", fill: "forwards" })
-          .onfinish = () => line.remove();
-      }
+      if (clipped) FX.fadeOutLine(line, 350);
     }
   };
 
-  /** 自動消去：box.autoClear が真なら clearSec 秒後に行をフェードアウトして消す */
-  FX.scheduleAutoClear = function (line, box) {
-    const sec = box && box.autoClear ? +box.clearSec || 0 : 0;
-    if (sec <= 0) return;
-    setTimeout(() => {
-      if (!line.isConnected || line._pruning) return;
-      line._pruning = true;
-      line.animate([{ opacity: 1 }, { opacity: 0 }],
-        { duration: 600, easing: "ease-out", fill: "forwards" })
-        .onfinish = () => line.remove();
-    }, sec * 1000);
+  /** 行をフェードアウトして取り除く */
+  FX.fadeOutLine = function (line, ms) {
+    if (!line || !line.isConnected || line._pruning) return;
+    line._pruning = true;
+    line.animate([{ opacity: 1 }, { opacity: 0 }],
+      { duration: ms || 600, easing: "ease-out", fill: "forwards" })
+      .onfinish = () => line.remove();
+  };
+
+  /** 消えかけ（フェードアウト中）を除いた「まだ画面に居座る行」を返す */
+  FX.liveLines = function (linesEl) {
+    return [...linesEl.children].filter(l => !l._pruning);
+  };
+
+  /** 無音一括消去：溜まっている行をまとめてフェードアウトして消す */
+  FX.fadeOutAll = function (linesEl) {
+    for (const line of [...linesEl.children]) FX.fadeOutLine(line);
+  };
+
+  /**
+   * 無音一括消去の秒数を正規化して返す（-1 = 消さない）。
+   * 旧キー（autoClear/clearSec）で保存されたボックスもここで読み替える。
+   */
+  FX.clearAllSec = function (box) {
+    if (!box) return -1;
+    if (box.clearAllSec !== undefined && box.clearAllSec !== null)
+      return +box.clearAllSec > 0 ? +box.clearAllSec : -1;
+    return (box.autoClear && +box.clearSec > 0) ? +box.clearSec : -1;
   };
 
   /**
    * スムーズスクロール（FLIP方式・transformのみ＝GPU合成で軽量）
    * addFn() の中で行を追加すると、伸びた分だけ一瞬元の位置に戻してから
    * アニメで滑らかに流す。flow=上へ / vertical=右へ。box.smooth=false なら即時。
+   * flow の縦寄せ（box.valign）で「行が伸びる向き」が変わるので補正量も変える:
+   *   bottom = 下アンカー（既存行が上へ動く）→ 伸びた分だけ戻す
+   *   top    = 上アンカー（既存行は動かない）→ 補正不要
+   *   middle = 上下中央（既存行は半分だけ上へ動く）→ 半分だけ戻す
    */
   FX.smoothAppend = function (scrollEl, box, addFn) {
     const vert = box && box.mode === "vertical";
+    const flow = !vert && (!box || (box.mode || "flow") !== "lyric");
+    const valign = (box && box.valign) || "bottom";
+    // 上寄せは既存行が1pxも動かないのでFLIPそのものが不要
+    if (flow && valign === "top") { addFn(); return; }
     const before = vert ? scrollEl.offsetWidth : scrollEl.offsetHeight;
     addFn();
     if (!box || !box.smooth) return;
     const delta = (vert ? scrollEl.offsetWidth : scrollEl.offsetHeight) - before;
     if (delta <= 0) return;
+    // 上下中央は基準transformが translateY(-50%)。そこからのズレでアニメする
+    const mid = flow && valign === "middle";
+    const from = vert ? `translateX(${-delta}px)`
+      : mid ? `translateY(calc(-50% + ${delta / 2}px))`
+            : `translateY(${delta}px)`;
+    const to = mid ? "translateY(-50%)" : "translate(0,0)";
     scrollEl.style.transition = "none";
-    scrollEl.style.transform =
-      vert ? `translateX(${-delta}px)` : `translateY(${delta}px)`;
+    scrollEl.style.transform = from;
     requestAnimationFrame(() => {
       scrollEl.style.transition =
         `transform ${box.smoothMs || 250}ms cubic-bezier(.25,.6,.3,1)`;
-      scrollEl.style.transform = "translate(0,0)";
+      scrollEl.style.transform = to;
     });
+  };
+
+  /**
+   * 1行に収める: 折り返しを禁止し、幅からはみ出す分はフォントを縮小する。
+   * scrollWidth の実測が要るので、el は DOM に接続済みの状態で呼ぶこと。
+   *   availPx: 収めたい幅（スクローラの clientWidth 等）
+   *   basePx:  縮める前のフォントサイズ（px）
+   *   minRatio: 縮小の下限（basePx比・既定 0.3）
+   */
+  FX.fitOneLine = function (el, availPx, basePx, minRatio) {
+    el.style.whiteSpace = "nowrap";
+    el.style.fontSize = basePx + "px";
+    const w = el.scrollWidth;
+    if (w > availPx && availPx > 0)
+      el.style.fontSize = Math.max((minRatio ?? 0.3) * basePx,
+                                   basePx * availPx / w) + "px";
   };
 
   // ---------------- リリックビデオ風字幕 ----------------
@@ -920,6 +984,8 @@
     const state = container._lyr ?? (container._lyr = { scenes: [], lastPattern: "", strongCooldown: 0 });
     const pattern = lyricChoose(text, opts.box || {}, state);
     const scene = lyricScene(container, opts.style, pattern);
+    if (opts.fid != null) scene.dataset.fid = String(opts.fid);   // 訳文を後から結び付ける目印
+    scene._lyrBase = lyricBaseSize(opts);   // 訳文のサイズ基準（enScale の em はこれに乗る）
     lyricBuilders[pattern.id](scene, text, opts);
     state.scenes.push(scene);
     const maxScenes = Math.max(1, Math.min(3, opts.box.lyricMaxScenes ?? 2));
@@ -932,6 +998,40 @@
     }, life);
     FX.burstLine(scene.querySelector(".lyr-unit") || scene);
     return pattern.id;
+  };
+
+  // リリックシーン(fid)の下部に訳文を併記する。decorate(el) が EN スタイルを適用する。
+  // シーンが既に消えていれば false（flow の「見切れた行は無視」と同じ扱い）。
+  FX.lyricTranslate = function (container, fid, lang, text, style, decorate) {
+    const state = container._lyr;
+    if (!state || fid == null) return false;
+    const scene = state.scenes.find(s => s.dataset.fid === String(fid));
+    if (!scene) return false;
+    let wrap = scene.querySelector(".lyr-tr");
+    if (!wrap) {
+      wrap = document.createElement("div");
+      wrap.className = "lyr-tr";
+      // flow では .en が親 .line の縁取り・フォントを継承する。シーン直下には
+      // 継承元が無いので、wrap に本文スタイルを敷いて同じ継承関係を作る。
+      // フォントサイズはリリックの文字サイズ基準（styleEn の enScale(em) が乗る）。
+      FX.applyLineStyle(wrap, style, Math.max(14, Math.round(scene._lyrBase || 40)));
+      wrap.style.fontWeight = 600;   // flow の .line .en と同じ太さ
+      scene.appendChild(wrap);
+      lyricAnimate(wrap, [
+        { opacity: 0, transform: "translate(-50%, 10px)" },
+        { opacity: 1, transform: "translate(-50%, 0)" },
+      ], { duration: 420, delay: 120, easing: "ease-out", fill: "both" });
+    }
+    lang = lang || "";
+    let el = [...wrap.children].find(e => (e.dataset.lang || "") === lang);
+    if (!el) {
+      el = document.createElement("div");
+      el.dataset.lang = lang;
+      wrap.appendChild(el);
+    }
+    if (decorate) decorate(el);
+    el.textContent = text;
+    return true;
   };
 
   FX.lyricClear = function (container) {

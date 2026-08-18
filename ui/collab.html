@@ -17,15 +17,19 @@
 <script src="/ui/theme-sync.js" defer></script>
 <style>
   :root {
+    color-scheme: dark;
     --bg: #0d1117; --panel: #161c26; --panel2: #1c2432;
     --line: #2a3547; --text: #dce6f5; --dim: #7d8ba1;
     --accent: #00e5ff; --accent2: #ff2d95; --ok: #3dffa0; --warn: #ffb84d; --err: #ff5c5c;
   }
   :root[data-theme="light"] {
+    color-scheme: light;
     --bg: #f7f9fc; --panel: #ffffff; --panel2: #eef2f8;
     --line: #dbe2ec; --text: #16202e; --dim: #5c6b80;
     --accent: #0499bd; --accent2: #d4247a; --ok: #12a05f; --warn: #b5761a; --err: #d94141;
   }
+  /* selectのポップアップ一覧はcolor-schemeだけでは追随しない環境があるため明示指定 */
+  select option { background: var(--panel2); color: var(--text); }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     background: var(--bg); color: var(--text);

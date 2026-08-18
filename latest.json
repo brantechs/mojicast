@@ -1,5 +1,5 @@
 {
-  "version": "0.7.1",
+  "version": "0.8.2",
   "url": "https://emo-ishiki.booth.pm/items/8643987",
-  "notes": "macOS（Apple Silicon）版を追加。初回モデルDLの進捗表示を修正"
+  "notes": "中国語翻訳が「可可可…」のように壊れたり空になったりする問題を修正"
 }

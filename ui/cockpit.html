@@ -19,16 +19,20 @@
 </script>
 <style>
   :root {
+    color-scheme: dark;
     --bg: #0d1117; --panel: #161c26; --panel2: #1c2432;
     --line: #2a3547; --text: #dce6f5; --dim: #7d8ba1;
     --accent: #00e5ff; --accent2: #ff2d95; --ok: #3dffa0; --warn: #ffb84d; --err: #ff5c5c;
   }
   /* ライトテーマ（GUI窓のみ。overlayは対象外）。既定はダーク。 */
   :root[data-theme="light"] {
+    color-scheme: light;
     --bg: #f7f9fc; --panel: #ffffff; --panel2: #eef2f8;
     --line: #dbe2ec; --text: #16202e; --dim: #5c6b80;
     --accent: #0499bd; --accent2: #d4247a; --ok: #12a05f; --warn: #b5761a; --err: #d94141;
   }
+  /* selectのポップアップ一覧はcolor-schemeだけでは追随しない環境があるため明示指定 */
+  select option { background: var(--panel2); color: var(--text); }
   /* 字幕モニタは透過オーバーレイの見た目。ライトでは黒縞→透過を示す市松に */
   :root[data-theme="light"] #monitor {
     background: repeating-conic-gradient(#cfd7e2 0% 25%, #e4e9f1 0% 50%) 0 0/22px 22px;
@@ -364,15 +368,22 @@
     margin-right: 8px; vertical-align: -3px; overflow: hidden;
   }
   .preset .mini i { position: absolute; background: var(--accent2); opacity: .75; border-radius: 1px; }
-  .obs {
-    display: flex; gap: 6px; margin-top: 10px;
-  }
-  .obs input { flex: 1; font-size: 12px; color: var(--dim); }
+  /* OBSに表示: 要素（全部入り／文字起こし／翻訳n）ごとのURL行 */
+  .obsrow { margin-top: 10px; }
+  .obsrow-top { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .obsrow-label { flex: 1; }
+  .obsrow-bg { display: flex; align-items: center; gap: 4px; color: var(--dim); }
+  .obsrow-bg input { accent-color: var(--accent); width: 14px; height: 14px; }
+  .obsrow-top input[type=color] { width: 34px; height: 22px; padding: 1px; cursor: pointer;
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 5px; }
+  .obsrow-url { display: flex; gap: 6px; margin-top: 4px; }
+  .obsrow-url input { flex: 1; font-size: 12px; color: var(--dim); }
   footer { padding: 6px 16px; color: var(--dim); font-size: 11px; border-top: 1px solid var(--line); background: var(--panel); }
   .hint { color: var(--dim); font-size: 11px; margin-top: 4px; }
 </style>
 <script src="/ui/i18n.js"></script>
 <script src="/ui/fx.js"></script>
+<script src="/ui/obsurl.js"></script>
 </head>
 <body>
   <header>
@@ -500,7 +511,7 @@
           </div>
           <div class="feature-row">
             <span class="feature-icon">🌐</span>
-            <span class="feature-copy"><b id="transFeatureLabel">英訳</b><span data-i18n="cp.trans_d">翻訳字幕を一緒に表示</span></span>
+            <span class="feature-copy"><b data-i18n="cp.trans">翻訳</b><span data-i18n="cp.trans_d">翻訳を一緒に表示</span></span>
             <button class="feature-edit" onclick="openStudio('pillar=translation')" data-i18n="cp.configure">設定</button>
             <input type="checkbox" id="translateOn">
           </div>
@@ -533,10 +544,7 @@
             <div class="gdesc" data-i18n="cp.obs_sub">ブラウザソースにURLを貼り付け</div>
           </div>
         </div>
-        <div class="obs">
-          <input type="text" id="obsUrl" readonly>
-          <button onclick="copyUrl()" data-i18n="cp.copy">コピー</button>
-        </div>
+        <div id="obsList"></div>
         <div class="hint" data-i18n="cp.obs_hint">推奨サイズ: 配信解像度と同じ（例 1920×1080）</div>
         <button class="feature-edit" onclick="openSettings('obs')" style="margin-top:10px" data-i18n="cp.obs_connect">接続設定</button>
       </div>
@@ -704,7 +712,6 @@
       Object.assign(cfg, s.patch);
       done();
       await api("/api/config", { ...s.patch, setup_suggested: true });
-      syncModelCard();
     };
     $("suggestSkip").onclick = () => {
       done();
@@ -717,15 +724,8 @@
     openSettings("hearing");
   }
 
-  // 翻訳チップの表示名（英訳/中国語訳など）を設定に同期
   // i18n: 訳語を引く（ja既定を同梱・i18n.js未読込でも安全）
   const T = (key, jaDefault) => window.MojicastI18n ? window.MojicastI18n.t(key, jaDefault) : jaDefault;
-  const TR_NAMES = { en: "英訳", zh: "中国語訳", zh_tw: "台湾繁体字訳",
-    zh_hk: "香港繁体字訳", id: "インドネシア語訳", ja: "日本語訳", ko: "韓国語訳" };
-  function syncModelCard() {
-    const lang = cfg.translate_lang || "en";
-    $("transFeatureLabel").textContent = T("trg." + lang, TR_NAMES[lang] || "英訳");
-  }
 
   // コックピットに残す配信中の機能トグル
   function syncMovedToggles() {
@@ -733,7 +733,7 @@
     $("translateOn").checked = !!cfg.translate;
   }
   $("wordFx").addEventListener("change", e => { cfg.word_fx = e.target.checked; saveCfg("word_fx"); });
-  $("translateOn").addEventListener("change", e => { cfg.translate = e.target.checked; saveCfg("translate"); });
+  $("translateOn").addEventListener("change", e => { cfg.translate = e.target.checked; renderObsList(); saveCfg("translate"); });
 
   $("device").addEventListener("change", e => {
     cfg.device = e.target.value === "default" ? null : +e.target.value; saveCfg("device");
@@ -798,10 +798,9 @@
     checkUpdate();   // 更新のお知らせ（非同期・失敗は無視）
     if (cfg.num_arabic === undefined) cfg.num_arabic = true;   // 既定ON（チップ表示用）
     if (cfg.save_log === undefined) cfg.save_log = true;
-    syncModelCard();
     syncMovedToggles();  // 高精度/漢数字/単語エフェクト（各カード・詳細へ移動）を反映
     if (!cfg.setup_suggested) initSuggest();   // 初回のみ: 環境に合わせた提案
-    $("obsUrl").value = location.origin + "/";
+    renderObsList();
     const dv = await api("/api/devices");
     const sel = $("device");
     sel.innerHTML = `<option value="default">${T("cp.mic_default", "既定のマイク")}</option>`;
@@ -931,7 +930,8 @@
 
   // 反映に再起動（停止→開始）が必要な設定キー。別窓（モデル/コラボ等）での
   // 変更もSSE経由でここを通るので、変化を見つけたら警告バーを出す
-  const RESTART_KEYS = ["asr_model", "asr_lang", "translate_lang", "precision",
+  const RESTART_KEYS = ["asr_model", "asr_lang", "translate_lang",
+    "translate_lang2", "translate_lang3", "precision",
     "device", "silence_ms", "interval", "max_utt", "hotwords_score",
     "use_hotwords", "word_profile", "collab", "collab_source",
     "collab_process", "collab_device", "self_name", "guest_name",
@@ -952,8 +952,8 @@
     renderBoxes();
     renderScenes();    // ボイスコマンド等での切替もシーン選択に追従させる
     syncCollab();      // コラボ窓で変えた方式/相手名をサマリへ反映
-    syncModelCard();   // モデル窓で変えた認識モデル/翻訳先をサマリとチップ名へ反映
     syncMovedToggles();// 別窓で高精度等が変わっていた場合に追従
+    renderObsList();   // 翻訳先の増減をOBS用URLの一覧へ反映
   }
 
   // ---------- レイアウト（プルダウン＋概要ミニ図） ----------
@@ -1046,15 +1046,17 @@
 
   async function clearCaptions() { await api("/api/clear", {}); }
 
-  function copyUrl() {
-    const el = $("obsUrl");
-    el.select();
-    try { navigator.clipboard.writeText(el.value); } catch (e) { document.execCommand("copy"); }
+  // OBS用URLの一覧（要素ごと・背景色つき）。翻訳設定や表示言語が変わったら描き直す
+  function renderObsList() {
+    if (window.ObsUrl) ObsUrl.render($("obsList"), cfg, { onCopy: copyToast });
+  }
+  function copyToast() {
     const toast = $("copyToast");
     toast.classList.add("show");
-    clearTimeout(copyUrl.timer);
-    copyUrl.timer = setTimeout(() => toast.classList.remove("show"), 1600);
+    clearTimeout(copyToast.timer);
+    copyToast.timer = setTimeout(() => toast.classList.remove("show"), 1600);
   }
+  window.addEventListener("mojicast-lang-changed", renderObsList);
 
   // ボイスコマンドの実行結果（サーバーのvcイベント）をトースト表示
   function vcToast(message, ok) {
@@ -1067,11 +1069,17 @@
   }
 
   // ---------- 字幕スタジオ（見た目・言葉） / アプリ設定（機器・AI・接続） ----------
+  // スタジオもアプリ設定も、コックピットの次に開く「サブ窓1つ」を共有する。
+  // ブラウザで開いた場合もタブが増えないよう、同じ窓名を使い回す。
+  const SUB_TARGET = "mojicastSub";
+  function openSubWindow(path, query) {
+    window.open(path + (query ? "?" + query : ""), SUB_TARGET, "width=1120,height=840");
+  }
   function openStudio(query) {
     if (window.pywebview && window.pywebview.api && window.pywebview.api.open_studio) {
       window.pywebview.api.open_studio(query || "");
     } else {
-      window.open("/ui/studio" + (query ? "?" + query : ""), "_blank", "width=1120,height=840");
+      openSubWindow("/ui/studio", query);
     }
   }
   function openSettings(section) {
@@ -1079,7 +1087,7 @@
     if (window.pywebview && window.pywebview.api && window.pywebview.api.open_settings) {
       window.pywebview.api.open_settings(query);
     } else {
-      window.open("/ui/settings" + (query ? "?" + query : ""), "_blank", "width=980,height=760");
+      openSubWindow("/ui/settings", query);
     }
   }
   function openWords() { openStudio("tab=words"); }
@@ -1232,13 +1240,15 @@
     while (monitor.children.length > MON_MAX) monitor.removeChild(monitor.firstChild);
     monitor.scrollTop = monitor.scrollHeight;
   }
-  function monTranslation(id, en) {
-    if (!en || id == null) return;
+  function monTranslation(id, lang, text) {
+    if (!text || id == null) return;
     const d = monitor.querySelector('[data-fid="' + id + '"]');
     if (!d) return;
-    let el = d.querySelector(".en");
-    if (!el) { el = document.createElement("div"); el.className = "en"; d.appendChild(el); }
-    el.textContent = en;
+    // 翻訳先が複数（最大3言語）のときは言語ごとに1行ずつ積む（overlayと同じ振り分け）
+    lang = lang || "";
+    let el = [...d.querySelectorAll(".en")].find((e) => (e.dataset.lang || "") === lang);
+    if (!el) { el = document.createElement("div"); el.className = "en"; el.dataset.lang = lang; d.appendChild(el); }
+    el.textContent = text;
     styleEnLine(el);
   }
 
@@ -1250,13 +1260,13 @@
       else if (m.type === "init") { if (m.state) setState(m.state.state, m.state.detail); setPreviewStyle(m); }
       else if (m.type === "partial") monPartial(m.text, m.speaker);
       else if (m.type === "final") monFinal(m.text, m.id, m.speaker);
-      else if (m.type === "translation") monTranslation(m.id, m.text);
+      else if (m.type === "translation") monTranslation(m.id, m.lang, m.text);
       else if (m.type === "level") $("meterBar").style.width = (m.value * 100) + "%";
       else if (m.type === "clear") { monitor.innerHTML = ""; partials.clear(); }
       else if (m.type === "style") { setPreviewStyle(m); refreshPresets(); }
       else if (m.type === "vc") vcToast(m.message, m.ok);
       else if (m.type === "theme") { cfg.theme = m.theme; applyTheme(m.theme); }
-      else if (m.type === "ui_lang") { cfg.ui_lang = m.ui_lang; if (window.MojicastI18n) { window.MojicastI18n.applyLang(m.ui_lang); setState(lastState); syncModelCard(); } }
+      else if (m.type === "ui_lang") { cfg.ui_lang = m.ui_lang; if (window.MojicastI18n) { window.MojicastI18n.applyLang(m.ui_lang); setState(lastState); } }
     };
     es.onerror = () => { es.close(); setTimeout(connect, 1000); };
   }

@@ -275,7 +275,8 @@ class CaptionEngineLifecycleTests(unittest.TestCase):
         translating = threading.Event()
         release = threading.Event()
         self.engine = CaptionEngine(
-            on_translation=lambda fid, text: translated.append((fid, text))
+            on_translation=lambda fid, lang, text:
+                translated.append((fid, lang, text))
         )
 
         def slow_translate(text):
@@ -283,7 +284,7 @@ class CaptionEngineLifecycleTests(unittest.TestCase):
             release.wait(1)
             return "tr:" + text
 
-        self.engine._translate = slow_translate
+        self.engine._translators = [("fugumt", "en", slow_translate)]
         self.engine._translate_on = True
         self.engine._tq = queue.Queue(maxsize=8)
         self.engine._tworker = threading.Thread(
@@ -310,6 +311,123 @@ class CaptionEngineLifecycleTests(unittest.TestCase):
         self.assertIsNone(self.engine._tworker)
         self.assertIsNone(self.engine._tq)
         self.assertEqual(translated, [])
+
+    def test_translation_worker_emits_each_target_language(self):
+        translated = []
+        done = threading.Event()
+        self.engine = CaptionEngine(
+            on_translation=lambda fid, lang, text:
+                (translated.append((fid, lang, text)),
+                 done.set() if lang == "zh" else None)
+        )
+        self.engine._translators = [
+            ("fugumt", "en", lambda t: "en:" + t),
+            ("m2m", "zh", lambda t: "zh:" + t),
+        ]
+        self.engine._translate_on = True
+        self.engine._tq = queue.Queue(maxsize=8)
+        self.engine._tworker = threading.Thread(
+            target=self.engine._translate_loop, daemon=True
+        )
+        self.engine._tworker.start()
+        self.engine._tq.put_nowait((1, "こんにちは"))
+        self.assertTrue(done.wait(1))
+        self.engine._stop_translate_worker()
+        self.assertEqual(translated, [(1, "en", "en:こんにちは"),
+                                      (1, "zh", "zh:こんにちは")])
+
+    def test_translation_worker_emits_three_target_languages(self):
+        translated = []
+        done = threading.Event()
+        self.engine = CaptionEngine(
+            on_translation=lambda fid, lang, text:
+                (translated.append((fid, lang, text)),
+                 done.set() if lang == "ko" else None)
+        )
+        self.engine._translators = [
+            ("fugumt", "en", lambda t: "en:" + t),
+            ("opencc", "zh_tw", lambda t: "zh_tw:" + t),
+            ("m2m", "ko", lambda t: "ko:" + t),
+        ]
+        self.engine._translate_on = True
+        self.engine._tq = queue.Queue(maxsize=8)
+        self.engine._tworker = threading.Thread(
+            target=self.engine._translate_loop, daemon=True
+        )
+        self.engine._tworker.start()
+        self.engine._tq.put_nowait((1, "こんにちは"))
+        self.assertTrue(done.wait(1))
+        self.engine._stop_translate_worker()
+        # 第1→第2→第3翻訳先の順（＝設定順）に通知される
+        self.assertEqual(translated, [(1, "en", "en:こんにちは"),
+                                      (1, "zh_tw", "zh_tw:こんにちは"),
+                                      (1, "ko", "ko:こんにちは")])
+
+
+class TranslatePlansTest(unittest.TestCase):
+    """_translate_plans: 第1〜第3翻訳先から翻訳経路を決める判定"""
+
+    def setUp(self):
+        self.engine = CaptionEngine()
+
+    def plans(self, **cfg):
+        return self.engine._translate_plans({"translate": True, **cfg})
+
+    def test_disabled_returns_empty(self):
+        self.assertEqual(
+            self.engine._translate_plans({"translate": False}), ())
+
+    def test_single_target_default_en(self):
+        self.assertEqual(self.plans(), (("fugumt", "ja", "en"),))
+
+    def test_second_target_appends_plan(self):
+        self.assertEqual(
+            self.plans(translate_lang="en", translate_lang2="zh_tw"),
+            (("fugumt", "ja", "en"), ("m2m", "ja", "zh_tw")))
+
+    def test_duplicate_targets_collapse(self):
+        self.assertEqual(
+            self.plans(translate_lang="en", translate_lang2="en"),
+            (("fugumt", "ja", "en"),))
+
+    def test_third_target_appends_plan(self):
+        self.assertEqual(
+            self.plans(translate_lang="en", translate_lang2="zh_tw",
+                       translate_lang3="ko"),
+            (("fugumt", "ja", "en"), ("m2m", "ja", "zh_tw"),
+             ("m2m", "ja", "ko")))
+
+    def test_third_target_collapses_when_duplicated(self):
+        # 3つ目が1つ目・2つ目と重複しても経路は増えない
+        self.assertEqual(
+            self.plans(translate_lang="en", translate_lang2="ko",
+                       translate_lang3="en"),
+            (("fugumt", "ja", "en"), ("m2m", "ja", "ko")))
+
+    def test_empty_second_target_keeps_single(self):
+        self.assertEqual(
+            self.plans(translate_lang="zh", translate_lang2=""),
+            (("m2m", "ja", "zh"),))
+
+    def test_empty_second_target_does_not_drop_third(self):
+        # 2つ目だけ「追加しない」でも、3つ目は設定順で生きる
+        self.assertEqual(
+            self.plans(translate_lang="en", translate_lang2="",
+                       translate_lang3="zh"),
+            (("fugumt", "ja", "en"), ("m2m", "ja", "zh")))
+
+    def test_same_as_source_skipped_per_target(self):
+        # 中国語認識中: 第1(zh)は原文と同じでスキップ、第2(en)だけ生きる
+        self.assertEqual(
+            self.plans(asr_model="sensevoice", asr_lang="zh",
+                       translate_lang="zh", translate_lang2="en"),
+            (("m2m", "zh", "en"),))
+
+    def test_opencc_route_for_zh_regional(self):
+        self.assertEqual(
+            self.plans(asr_model="sensevoice", asr_lang="zh",
+                       translate_lang="zh_tw", translate_lang2="ja"),
+            (("opencc", "zh", "zh_tw"), ("m2m", "zh", "ja")))
 
 
 if __name__ == "__main__":

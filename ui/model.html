@@ -18,15 +18,19 @@
 <script src="/ui/theme-sync.js" defer></script>
 <style>
   :root {
+    color-scheme: dark;
     --bg: #0d1117; --panel: #161c26; --panel2: #1c2432;
     --line: #2a3547; --text: #dce6f5; --dim: #7d8ba1;
     --accent: #00e5ff; --ok: #3dffa0; --warn: #ffb84d;
   }
   :root[data-theme="light"] {
+    color-scheme: light;
     --bg: #f7f9fc; --panel: #ffffff; --panel2: #eef2f8;
     --line: #dbe2ec; --text: #16202e; --dim: #5c6b80;
     --accent: #0499bd; --ok: #12a05f; --warn: #b5761a;
   }
+  /* selectのポップアップ一覧はcolor-schemeだけでは追随しない環境があるため明示指定 */
+  select option { background: var(--panel2); color: var(--text); }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     background: var(--bg); color: var(--text);
@@ -136,6 +140,41 @@
         <div class="hint">台湾・香港向けは地域ごとの漢字と語彙に整えます。
           認識言語と同じ翻訳先を選ぶと翻訳はスキップされます。</div>
       </div>
+      <div class="row">
+        <label>2つ目の翻訳言語（同時に併記）</label>
+        <select id="transLang2">
+          <option value="">追加しない</option>
+          <option value="en">英語</option>
+          <optgroup label="中国語圏">
+            <option value="zh">中国語（簡体字・中国大陸）</option>
+            <option value="zh_tw">中国語（繁体字・台湾）</option>
+            <option value="zh_hk">中国語（繁体字・香港）</option>
+          </optgroup>
+          <option value="id">インドネシア語</option>
+          <option value="ja">日本語（海外配信の認識と組み合わせて）</option>
+          <option value="ko">韓国語（試験的）</option>
+        </select>
+        <div class="route" id="routeHint2" style="display:none"></div>
+      </div>
+      <div class="row">
+        <label>3つ目の翻訳言語（同時に併記）</label>
+        <select id="transLang3">
+          <option value="">追加しない</option>
+          <option value="en">英語</option>
+          <optgroup label="中国語圏">
+            <option value="zh">中国語（簡体字・中国大陸）</option>
+            <option value="zh_tw">中国語（繁体字・台湾）</option>
+            <option value="zh_hk">中国語（繁体字・香港）</option>
+          </optgroup>
+          <option value="id">インドネシア語</option>
+          <option value="ja">日本語（海外配信の認識と組み合わせて）</option>
+          <option value="ko">韓国語（試験的）</option>
+        </select>
+        <div class="route" id="routeHint3" style="display:none"></div>
+        <div class="hint">確定字幕の下に最大3言語ぶんの訳文を設定順で積んで表示します。
+          言語を増やすほど翻訳モデルのロードと処理量が増えるため、
+          低スペック機では1言語のみがおすすめです。</div>
+      </div>
     </div>
   </main>
 
@@ -170,31 +209,46 @@
       "日本語の精度は日本語特化がやや上。",
   };
 
+  // 翻訳先1つぶんの経路説明（engine._plan_for_target と同じ判定）
+  function routeText(src, tgt) {
+    const L = { ja: "日", zh: "中", en: "英", ko: "韓", id: "インドネシア",
+      zh_tw: "台湾繁体字", zh_hk: "香港繁体字" };
+    const regional = ["zh_tw", "zh_hk"].includes(tgt);
+    if (src === tgt)
+      return "認識言語と翻訳先が同じため、翻訳はスキップされます";
+    if (src === "zh" && regional)
+      return `使用処理: OpenCC（中→${L[tgt]}）`;
+    let model = src === "ja" && tgt === "en" ? "FuguMT" : "M2M-100";
+    if (regional) model += " ＋ OpenCC";
+    return `使用モデル: ${model}（${L[src] || src}→${L[tgt] || tgt}）`;
+  }
+
   function sync() {
     const sv = cfg.asr_model === "sensevoice";
     $("asrModel").value = cfg.asr_model || "k2-ja";
     $("asrLang").value = cfg.asr_lang || "auto";
     $("transLang").value = cfg.translate_lang || "en";
+    $("transLang2").value = cfg.translate_lang2 || "";
+    $("transLang3").value = cfg.translate_lang3 || "";
     $("modelDesc").textContent = DESCS[$("asrModel").value];
     $("asrLangRow").style.display = sv ? "" : "none";
-    // 実際に使われる翻訳モデルと方向（engine._translate_plan と同じ判定）
-    const tgt = cfg.translate_lang || "en";
+    // 実際に使われる翻訳モデルと方向
     let src = "ja";
     if (sv && cfg.asr_lang && !["auto", "ja"].includes(cfg.asr_lang))
       src = cfg.asr_lang;
     if (src === "yue") src = "zh";   // 広東語は中文字扱いで翻訳（engineと同じ判定）
-    const L = { ja: "日", zh: "中", en: "英", ko: "韓", id: "インドネシア",
-      zh_tw: "台湾繁体字", zh_hk: "香港繁体字" };
-    const regional = ["zh_tw", "zh_hk"].includes(tgt);
-    if (src === tgt) {
-      $("routeHint").textContent = "認識言語と翻訳先が同じため、翻訳はスキップされます";
-    } else if (src === "zh" && regional) {
-      $("routeHint").textContent = `使用処理: OpenCC（中→${L[tgt]}）`;
-    } else {
-      let model = src === "ja" && tgt === "en" ? "FuguMT" : "M2M-100";
-      if (regional) model += " ＋ OpenCC";
-      $("routeHint").textContent = `使用モデル: ${model}（${L[src] || src}→${L[tgt] || tgt}）`;
-    }
+    // 翻訳先（最大3言語）ごとに経路ヒントを出す。「追加しない」の欄は隠す
+    const tgts = [cfg.translate_lang || "en", cfg.translate_lang2 || "",
+      cfg.translate_lang3 || ""];
+    tgts.forEach((tgt, i) => {
+      const el = $("routeHint" + (i ? i + 1 : ""));
+      el.style.display = (i && !tgt) ? "none" : "";
+      if (i && !tgt) return;
+      // 先に選んだ翻訳先と同じなら、エンジン側で1経路にまとめられる
+      el.textContent = tgts.slice(0, i).includes(tgt)
+        ? "先に選んだ翻訳先と同じため、1つにまとめられます"
+        : routeText(src, tgt);
+    });
   }
 
   $("asrModel").addEventListener("change", () => {
@@ -206,6 +260,12 @@
   $("transLang").addEventListener("change", () => {
     save({ translate_lang: $("transLang").value }); sync();
   });
+  $("transLang2").addEventListener("change", () => {
+    save({ translate_lang2: $("transLang2").value }); sync();
+  });
+  $("transLang3").addEventListener("change", () => {
+    save({ translate_lang3: $("transLang3").value }); sync();
+  });
 
   // 認識が動作中なら「停止→開始で反映」の警告を出す（保存のたびに再確認）
   async function checkRunning() {
@@ -214,7 +274,7 @@
       $("runWarn").style.display = st.state === "running" ? "" : "none";
     } catch (e) {}
   }
-  for (const id of ["asrModel", "asrLang", "transLang"])
+  for (const id of ["asrModel", "asrLang", "transLang", "transLang2", "transLang3"])
     $(id).addEventListener("change", checkRunning);
 
   (async () => {

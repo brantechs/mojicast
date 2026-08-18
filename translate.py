@@ -232,14 +232,15 @@ def translate_m2m(text: str, src: str = "ja", tgt: str = "zh",
     広東語yueはM2M-100非対応のため翻訳先には使わない（音声認識のみ）。
 
     - ja→zh のときだけ配信用語の事前置換（_STREAM_TERMS_ZH）を適用
-    - repetition_penalty 省略時は言語別の既定を使う: 韓国語は greedy だと
-      反復暴走するため 1.2（実測 2026-07-22）、他は 1.0
+    - repetition_penalty 省略時は全言語 1.2。greedy は感動詞・繰り返し口語で
+      反復暴走する（ko: 実測 2026-07-22、zh: 実測 2026-08-18・配信ログ3298文で
+      「可可可可…」等の反復暴走が104件→1件）。no_repeat_ngram_size=3 も併用
     """
     if not text or not text.strip():
         return ""
     model_tgt = "zh" if tgt in _ZH_VARIANT_CONFIGS else tgt
     if repetition_penalty is None:
-        repetition_penalty = 1.2 if model_tgt == "ko" else 1.0
+        repetition_penalty = 1.2
     if _m2m is None:
         load_translator_zh()
     if src == "ja" and model_tgt == "zh":
@@ -252,14 +253,23 @@ def translate_m2m(text: str, src: str = "ja", tgt: str = "zh",
     if len(tokens) > 510:
         tokens = tokens[:510]
     source = [f"__{src}__"] + tokens + ["</s>"]
-    res = _m2m.translate_batch([source], target_prefix=[[f"__{model_tgt}__"]],
-                               beam_size=1,
-                               repetition_penalty=repetition_penalty,
-                               max_decoding_length=max_new_tokens)
-    out = [t for t in res[0].hypotheses[0]
-           if not (t.startswith("__") and t.endswith("__"))
-           and t not in ("</s>", "<pad>", "<unk>")]
-    translated = _sp_m2m.decode(out).strip()
+
+    def _decode(beam_size: int) -> str:
+        res = _m2m.translate_batch([source], target_prefix=[[f"__{model_tgt}__"]],
+                                   beam_size=beam_size,
+                                   repetition_penalty=repetition_penalty,
+                                   no_repeat_ngram_size=3,
+                                   max_decoding_length=max_new_tokens)
+        out = [t for t in res[0].hypotheses[0]
+               if not (t.startswith("__") and t.endswith("__"))
+               and t not in ("</s>", "<pad>", "<unk>")]
+        return _sp_m2m.decode(out).strip()
+
+    translated = _decode(1)
+    if not translated:
+        # greedyだと <unk> だけを出して空になる入力がある（例:「うどん」→zh、
+        # 実測 2026-08-18）。beam_size=2 で1回だけ引き直す。
+        translated = _decode(2)
     return convert_zh_variant(translated, tgt)
 
 
